@@ -247,7 +247,7 @@ app.post("/api/fetch-multiple", async (req, res) => {
 // ========================
 // Cron Endpoint: Wake Server Every 6 Minutes
 // ========================
-cron.schedule("*/6 * * * *", () => {
+cron.schedule("30 18 * * *", () => {
   console.log("⏰ Cron: Waking server to prevent sleep");
 });
 
@@ -255,7 +255,7 @@ cron.schedule("*/6 * * * *", () => {
 // Cron: Auto Fetch Some Users Every 10 Minutes
 // ========================
 const AUTO_USERS = process.env.AUTO_USERS ? process.env.AUTO_USERS.split(",") : [];
-cron.schedule("*/10 * * * *", async () => {
+cron.schedule("0 9 * * 1", async () => {
   console.log("⏰ Cron: Auto-fetching tweets for predefined users");
   for (const username of AUTO_USERS) {
     try {
