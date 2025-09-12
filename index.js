@@ -39,6 +39,37 @@ const cacheSchema = new mongoose.Schema({
 const TweetCache = mongoose.model("TweetCache", cacheSchema);
 
 // ========================
+// MongoDB Model: FormattedTweet
+// ========================
+const formattedTweetSchema = new mongoose.Schema(
+  {
+    tweetId: { type: String, unique: true, required: true },
+    url: String,
+    twitterUrl: String,
+    text: String,
+    createdAt: Date,
+    lang: String,
+    media: [
+      {
+        type: { type: String, enum: ["photo", "video", "animated_gif"] },
+        url: String, // for photo
+        variants: [
+          {
+            bitrate: Number,
+            url: String,
+          },
+        ], // for video / gif
+      },
+    ],
+  },
+  { timestamps: true, collection: "formatted_tweets" }
+);
+
+const FormattedTweet = mongoose.model("FormattedTweet", formattedTweetSchema);
+
+const BEARER_TOKEN = process.env.BEARER_TOKEN;
+
+// ========================
 // Express + MongoDB Setup
 // ========================
 const app = express();
@@ -97,7 +128,10 @@ async function translateText(text, sourceLang = "te", targetLang = "en") {
     );
     return res.data[0]?.translation_text || text;
   } catch (err) {
-    console.error(`Translator API error (${sourceLang}→${targetLang}):`, err.message);
+    console.error(
+      `Translator API error (${sourceLang}→${targetLang}):`,
+      err.message
+    );
     return text;
   }
 }
@@ -140,7 +174,10 @@ async function tweetToArticle(tweet, username) {
     try {
       englishText = await translateText(teluguText, "te", "en");
     } catch (err) {
-      console.warn("Translation failed, using Telugu as fallback:", err.message);
+      console.warn(
+        "Translation failed, using Telugu as fallback:",
+        err.message
+      );
       englishText = "";
     }
   }
@@ -211,7 +248,9 @@ app.get("/api/articles/:username", async (req, res) => {
     res.json({ status: "success", source: username, articles });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ status: "error", message: "Failed to fetch tweets" });
+    res
+      .status(500)
+      .json({ status: "error", message: "Failed to fetch tweets" });
   }
 });
 
@@ -224,7 +263,9 @@ app.post("/api/fetch-multiple", async (req, res) => {
   const intervalMs = parseInt(req.body.intervalMs) || 60 * 1000;
 
   if (!Array.isArray(usernames) || usernames.length === 0) {
-    return res.status(400).json({ status: "error", message: "No usernames provided" });
+    return res
+      .status(400)
+      .json({ status: "error", message: "No usernames provided" });
   }
 
   usernames.forEach((username, index) => {
@@ -240,7 +281,9 @@ app.post("/api/fetch-multiple", async (req, res) => {
 
   res.json({
     status: "success",
-    message: `Fetching tweets for ${usernames.length} usernames in intervals of ${intervalMs / 1000} seconds`,
+    message: `Fetching tweets for ${
+      usernames.length
+    } usernames in intervals of ${intervalMs / 1000} seconds`,
   });
 });
 
@@ -254,8 +297,10 @@ cron.schedule("*/6 * * * *", () => {
 // ========================
 // Cron: Auto Fetch Some Users Every 10 Minutes
 // ========================
-const AUTO_USERS = process.env.AUTO_USERS ? process.env.AUTO_USERS.split(",") : [];
-cron.schedule("30 18 * * *", async () => {
+const AUTO_USERS = process.env.AUTO_USERS
+  ? process.env.AUTO_USERS.split(",")
+  : [];
+cron.schedule("*/10 * * * *", async () => {
   console.log("⏰ Cron: Auto-fetching tweets for predefined users");
   for (const username of AUTO_USERS) {
     try {
@@ -264,6 +309,106 @@ cron.schedule("30 18 * * *", async () => {
     } catch (err) {
       console.error(`❌ Auto-fetch error for ${username}:`, err.message);
     }
+  }
+});
+
+app.get("/api/formatted-tweet/:tweetIds", async (req, res) => {
+  try {
+    const tweet_ids = req.params.tweetIds || req.query.tweet_ids;
+    if (!tweet_ids)
+      return res.status(400).json({ error: "tweet_ids required" });
+
+    const response = await fetch(
+      `https://api.twitterapi.io/twitter/tweets?tweet_ids=${tweet_ids}`,
+      {
+        headers: {
+          "x-api-key": process.env.TWITTER_API_KEY,
+        },
+      }
+    );
+
+    const data = await response.json();
+
+    if (data.status !== "success" || !data.tweets || !data.tweets.length) {
+      return res.status(404).json({
+        error: "Tweet(s) not found or API returned error",
+        rawResponse: data,
+      });
+    }
+
+    const formattedTweets = data.tweets.map((tweet) => ({
+      tweetId: tweet.id,
+      url: tweet.url,
+      twitterUrl: tweet.twitterUrl,
+      text: tweet.text,
+      createdAt: new Date(tweet.createdAt),
+      lang: tweet.lang,
+      media:
+        tweet.extendedEntities?.media
+          ?.map((m) => {
+            if (m.type === "photo") {
+              return {
+                type: "photo",
+                url: m.media_url_https || m.media_url, // store direct image url
+              };
+            } else if (m.type === "video" || m.type === "animated_gif") {
+              return {
+                type: m.type,
+                variants:
+                  m.video_info?.variants?.map((v) => ({
+                    bitrate: v.bitrate || null,
+                    url: v.url,
+                  })) || [],
+              };
+            }
+            return null;
+          })
+          .filter(Boolean) || [],
+    }));
+
+    // Save into DB (upsert to prevent duplicates)
+    for (const ft of formattedTweets) {
+      await FormattedTweet.findOneAndUpdate({ tweetId: ft.tweetId }, ft, {
+        upsert: true,
+        new: true,
+      });
+    }
+
+    res.json({ status: "success", tweets: formattedTweets });
+  } catch (err) {
+    console.error("Error fetching tweets:", err);
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
+// ========================
+// GET Paginated Tweets
+// ========================
+app.get("/api/saved-tweets", async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const skip = (page - 1) * limit;
+
+    const tweets = await FormattedTweet.find()
+      .sort({ createdAt: -1 }) // latest first
+      .skip(skip)
+      .limit(limit);
+
+    const total = await FormattedTweet.countDocuments();
+
+    res.json({
+      status: "success",
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      tweets,
+    });
+  } catch (err) {
+    console.error("Error fetching saved tweets:", err);
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 });
 
