@@ -64,11 +64,16 @@ const articleSchema = new mongoose.Schema(
     source: String,
     isCreatedBy: { type: String, default: "twitter_scraper" },
     publishedAt: Date,
-    media: [
+    media: media: [
       {
-        mediaType: String,
+        type: { type: String, default: "photo" },
         url: String,
-        _id: String,
+        variants: [
+          {
+            bitrate: Number,
+            url: String,
+          },
+        ],
       },
     ],
   },
