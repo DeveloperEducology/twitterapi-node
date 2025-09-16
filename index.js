@@ -759,96 +759,157 @@ app.put("/api/saved-tweets/:id", async (req, res) => {
 
 app.get("/api/curated-feed", async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10; // A smaller default limit is usually better
-    const skip = (page - 1) * limit;
-    const categories = req.query.categories; // e.g., "Sports,Technology"
+    const limit = parseInt(req.query.limit) || 10;
+    const categories = req.query.categories
+      ? req.query.categories.split(",").map((c) => c.trim())
+      : [];
+    const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
 
-    let combinedPosts = [];
+    let posts = [];
+    let nextCursor = null;
+    let usedCategories = false;
 
-    // --- Helper: Correct pipeline to handle 'categories' array ---
-    const getTopByCategoryPipeline = (matchClause = {}, perCategory = 3) => [
-      // Stage 1: Find documents where the categories array intersects with selected categories
-      { $match: matchClause },
-      // Stage 2: Deconstruct the categories array into separate documents
-      { $unwind: "$categories" },
-      // Stage 3: After unwinding, filter again to only include the categories the user asked for
-      { $match: { categories: matchClause.categories } },
-      // Stage 4: Sort to get the most recent posts first
-      { $sort: { createdAt: -1 } },
-      // Stage 5: Group by the DECONSTRUCTED "categories" field
-      {
-        $group: {
-          _id: "$categories",
-          posts: { $push: "$$ROOT" },
-        },
-      },
-      // Stage 6: Get the top N posts from each category group
-      {
-        $project: {
-          _id: 0,
-          posts: { $slice: ["$posts", perCategory] },
-        },
-      },
-    ];
+    // --- Helper: Deduplicate by _id ---
+    const dedupe = (arr) => {
+      const seen = new Set();
+      return arr.filter((p) => {
+        const key = String(p._id);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
 
-    if (categories) {
-      // --- Case 1: Selected categories, top N per category ---
-      const categoryArray = categories.split(",").map((cat) => cat.trim());
-      console.log(`Fetching curated posts for categories: ${categoryArray}`);
+    // --- 1. CATEGORY FEED ---
+    if (categories.length > 0) {
+      usedCategories = true;
 
-      const [tweetGroups, articleGroups] = await Promise.all([
-        FormattedTweet.aggregate(
-          // Use the 'categories' field (plural)
-          getTopByCategoryPipeline({ categories: { $in: categoryArray } }, 5) // Fetching 5 per cat
-        ),
-        Article.aggregate(
-          getTopByCategoryPipeline(
-            { categories: { $in: categoryArray }, source: "manual" },
-            5
-          )
-        ),
+      const tweetQuery = { categories: { $in: categories } };
+      const articleQuery = { categories: { $in: categories }, source: "manual" };
+
+      if (cursor) {
+        tweetQuery.createdAt = { $lt: cursor };
+        articleQuery.createdAt = { $lt: cursor };
+      }
+
+      const [tweets, articles] = await Promise.all([
+        FormattedTweet.find(tweetQuery)
+          .sort({ createdAt: -1 })
+          .limit(limit * 2) // fetch more for mixing
+          .lean(),
+        Article.find(articleQuery)
+          .sort({ createdAt: -1 })
+          .limit(limit * 2)
+          .lean(),
       ]);
 
-      const flattenedPosts = [];
-      tweetGroups.forEach((group) => flattenedPosts.push(...group.posts));
-      articleGroups.forEach((group) => flattenedPosts.push(...group.posts));
+      posts = dedupe([...tweets, ...articles])
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, limit);
 
-      combinedPosts = flattenedPosts;
-    } else {
-      // --- Case 2: Fallback, top 3 posts per category ---
-      console.log("Fetching 3 posts from each category (curated default).");
-      const [tweetGroups, articleGroups] = await Promise.all([
-        FormattedTweet.aggregate(getTopByCategoryPipeline({}, 3)),
-        Article.aggregate(getTopByCategoryPipeline({ source: "manual" }, 3)),
-      ]);
-
-      const flattenedPosts = [];
-      tweetGroups.forEach((group) => flattenedPosts.push(...group.posts));
-      articleGroups.forEach((group) => flattenedPosts.push(...group.posts));
-
-      combinedPosts = flattenedPosts;
+      if (posts.length > 0) {
+        nextCursor = posts[posts.length - 1].createdAt;
+      }
     }
 
-    // --- Common sorting + pagination ---
-    combinedPosts.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    // --- 2. FALLBACK TO GENERAL FEED ---
+    if (posts.length === 0) {
+      const tweetQuery = {};
+      const articleQuery = { source: "manual" };
 
-    const total = combinedPosts.length;
-    const paginated = combinedPosts.slice(skip, skip + limit);
+      if (cursor) {
+        tweetQuery.createdAt = { $lt: cursor };
+        articleQuery.createdAt = { $lt: cursor };
+      }
+
+      const [tweets, articles] = await Promise.all([
+        FormattedTweet.find(tweetQuery)
+          .sort({ createdAt: -1 })
+          .limit(limit * 2)
+          .lean(),
+        Article.find(articleQuery)
+          .sort({ createdAt: -1 })
+          .limit(limit * 2)
+          .lean(),
+      ]);
+
+      posts = dedupe([...tweets, ...articles])
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, limit);
+
+      if (posts.length > 0) {
+        nextCursor = posts[posts.length - 1].createdAt;
+      }
+    }
 
     res.json({
       status: "success",
-      page,
       limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      posts: paginated,
+      posts,
+      nextCursor,
+      usedCategories,
+      fallback: posts.length === 0 && categories.length > 0,
     });
   } catch (err) {
     console.error("Error fetching curated feed:", err);
-    res.status(500).json({ error: "Server error", details: err.message });
+    res.status(500).json({ status: "error", message: err.message });
   }
 });
+
+// ========================
+// Endpoint: Post YouTube Video via URL
+// ========================
+app.post("/api/youtube-post", async (req, res) => {
+  try {
+    const { url, title } = req.body;
+
+    // 1. Validation: Ensure URL and title are provided
+    if (!url || !title) {
+      return res.status(400).json({ 
+        status: "error", 
+        message: "Both 'url' and 'title' are required in the request body." 
+      });
+    }
+
+    // 2. Basic URL validation
+    if (!url.includes("youtube.com") && !url.includes("youtu.be")) {
+        return res.status(400).json({ status: "error", message: "Invalid YouTube URL provided." });
+    }
+
+    // 3. Create the new post object
+    const newYoutubePost = {
+      // Use a unique ID format for YouTube posts
+      tweetId: `yt_${new Date().getTime()}`, 
+      type: "youtube_video",
+      title: title,
+      text: title, // Use the title as the main text for simplicity
+      summary: "", // Can be left empty or generated later
+      createdAt: new Date(),
+      isPublished: true, // Default to published
+      categories: req.body.categories || [], // Optional categories from body
+      media: [
+        {
+          type: "youtube_link",
+          url: url,
+        },
+      ],
+    };
+
+    // 4. Save the new post to the database
+    const savedPost = await FormattedTweet.create(newYoutubePost);
+
+    // 5. Send a success response
+    res.status(201).json({ status: "success", post: savedPost });
+
+  } catch (err) {
+    console.error("❌ Error creating YouTube post:", err);
+    res
+      .status(500)
+      .json({ error: "Failed to create YouTube post", details: err.message });
+  }
+});
+
+
 // ========================
 // Endpoint: Delete Saved Tweet / Article
 // ========================
