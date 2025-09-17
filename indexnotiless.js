@@ -6,18 +6,26 @@ import dotenv from "dotenv";
 import cron from "node-cron";
 import cors from "cors";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+
+// >>> START: EXPO NOTIFICATION SETUP (1/4)
 import { Expo } from "expo-server-sdk";
+// >>> END: EXPO NOTIFICATION SETUP (1/4)
 
 dotenv.config();
 
+// >>> START: EXPO NOTIFICATION SETUP (2/4)
+// Initialize the Expo SDK client
 const expo = new Expo();
+// >>> END: EXPO NOTIFICATION SETUP (2/4)
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
 const SELF_URL =
   process.env.SERVER_URL || "https://twitterapi-7313.onrender.com";
 
-// Helper functions
+// ... (your existing helper functions: containsTelugu, processWithGemini)
 function containsTelugu(text) {
   return /[\u0C00-\u0C7F]/.test(text);
 }
@@ -47,65 +55,9 @@ async function processWithGemini(text) {
   }
 }
 
-
-// In server.js, replace your existing sendTargetedNotification function
-
-async function sendTargetedNotification({ title, body, category, data }) {
-  try {
-    console.log(`\n[DIAGNOSTIC] 1. Starting notification process for category: "${category}"`);
-
-    // Find tokens subscribed to the specific category
-    const savedTokens = await ExpoPushToken.find({ subscribedCategories: category });
-    const pushTokens = savedTokens.map(t => t.token);
-    
-    console.log(`[DIAGNOSTIC] 2. Found ${pushTokens.length} token(s) for this category.`);
-
-    if (pushTokens.length === 0) {
-      console.log(`[DIAGNOSTIC] --> Process stopped. No devices to notify.`);
-      return;
-    }
-
-    // Create messages
-    let messages = [];
-    for (let pushToken of pushTokens) {
-      if (Expo.isExpoPushToken(pushToken)) {
-        messages.push({
-          to: pushToken,
-          sound: 'default',
-          title: `[${category}] ${title}`,
-          body: body,
-          data: data || {},
-        });
-      }
-    }
-    console.log(`[DIAGNOSTIC] 3. Created ${messages.length} valid notification messages.`);
-
-    // Chunk and send notifications
-    const chunks = expo.chunkPushNotifications(messages);
-    console.log(`[DIAGNOSTIC] 4. Split messages into ${chunks.length} chunk(s). Sending now...`);
-    
-    for (let chunk of chunks) {
-      let tickets = await expo.sendPushNotificationsAsync(chunk);
-      
-      tickets.forEach((ticket, index) => {
-        const pushToken = chunk[index].to; 
-        if (ticket.status === 'ok') {
-          console.log(`✅ Notification for token ${pushToken} accepted by Expo. Ticket ID: ${ticket.id}`);
-        } else {
-          console.error(`❌ Notification for token ${pushToken} failed. Reason: ${ticket.details.error}`);
-          if (ticket.details.error === 'DeviceNotRegistered') {
-            console.log(`Removing inactive token: ${pushToken}`);
-            ExpoPushToken.deleteOne({ token: pushToken }).catch(e => console.error(e));
-          }
-        }
-      });
-    }
-
-  } catch (error) {
-    console.error(`[DIAGNOSTIC] --> An error occurred during the process for category '${category}':`, error);
-  }
-}
 const app = express();
+
+// ... (your existing middleware)
 const allowedOrigins = [
   "https://vijay-ixl.onrender.com",
   "https://news-dashboard-ob0p.onrender.com",
@@ -126,19 +78,20 @@ app.use(express.json());
 // MongoDB Models
 // ========================
 
-// UPDATED: Schema now includes subscribedCategories
+// >>> START: EXPO NOTIFICATION SETUP (3/4)
+// Schema for storing Expo Push Tokens
 const expoPushTokenSchema = new mongoose.Schema(
   {
     token: {
       type: String,
       required: true,
-      unique: true,
+      unique: true, // Prevent duplicate tokens
     },
-    subscribedCategories: [{ type: String }], // Array to store user preferences
   },
   { timestamps: true }
 );
 const ExpoPushToken = mongoose.model("ExpoPushToken", expoPushTokenSchema);
+// >>> END: EXPO NOTIFICATION SETUP (3/4)
 
 const articleSchema = new mongoose.Schema(
   {
@@ -159,6 +112,7 @@ const articleSchema = new mongoose.Schema(
   { timestamps: true }
 );
 const Article = mongoose.model("Article", articleSchema);
+// ... (your other schemas: cacheSchema, mediaSchema, formattedTweetSchema)
 const cacheSchema = new mongoose.Schema({
   username: { type: String, unique: true },
   tweets: Array,
@@ -206,9 +160,7 @@ mongoose
   .catch((err) => console.error("❌ MongoDB Error:", err));
 const client = new TwitterApiClient(process.env.TWITTER_API_KEY);
 
-// ========================
-// Helper functions and Cron Jobs
-// ========================
+// ... (your existing functions and cron jobs)
 const HF_API_TOKEN = process.env.HF_API_TOKEN;
 cron.schedule("*/5 * * * *", async () => {
   try {
@@ -345,48 +297,90 @@ cron.schedule("*/10 * * * *", async () => {
 // API Endpoints
 // ========================
 
-// UPDATED: Endpoint now saves categories along with the token
-app.post("/api/register-token", async (req, res) => {
-  const { token, categories } = req.body;
+// >>> START: EXPO NOTIFICATION SETUP (4/4)
 
+// Endpoint to register a push token
+app.post("/api/register-token", async (req, res) => {
+  const { token } = req.body;
+
+  // Validate the token
   if (!Expo.isExpoPushToken(token)) {
     return res.status(400).json({ error: "Invalid Expo Push Token." });
   }
 
   try {
+    // Save the token to the database (upsert handles duplicates)
     await ExpoPushToken.findOneAndUpdate(
       { token: token },
-      { $set: { token: token, subscribedCategories: categories || [] } },
+      { token: token },
       { upsert: true }
     );
-    console.log(
-      `Token registered/updated: ${token} with categories: ${categories}`
-    );
-    res.status(200).json({ message: "Token and preferences registered." });
+    console.log(`Token registered or updated: ${token}`);
+    res.status(200).json({ message: "Token registered successfully." });
   } catch (error) {
     console.error("Error registering token:", error);
     res.status(500).json({ error: "Failed to register token." });
   }
 });
 
-// Replace your existing /api/broadcast endpoint with this simplified version
-
+// Endpoint to broadcast a notification to all users
 app.post("/api/broadcast", async (req, res) => {
-  const { title, body, data, category } = req.body; 
+  const { title, body, data } = req.body; // e.g., data: { "url": "/details/123" }
 
-  if (!title || !body || !category) {
-    return res.status(400).json({ error: "Title, body, and category are required." });
+  if (!title || !body) {
+    return res.status(400).json({ error: "Title and body are required." });
   }
-  
-  // Call the reusable function
-  sendTargetedNotification({ title, body, data, category });
 
-  res.status(202).json({ 
-      message: `Broadcast to '${category}' category initiated successfully!`
-  });
+  try {
+    // 1. Get all saved tokens from the database
+    const savedTokens = await ExpoPushToken.find({}, "-_id token");
+    const pushTokens = savedTokens.map((t) => t.token);
+
+    if (pushTokens.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No registered devices to notify." });
+    }
+
+    // 2. Create notification messages
+    let messages = [];
+    for (let pushToken of pushTokens) {
+      if (!Expo.isExpoPushToken(pushToken)) {
+        console.error(`Push token ${pushToken} is not a valid Expo push token`);
+        continue;
+      }
+      messages.push({
+        to: pushToken,
+        sound: "default",
+        title: title,
+        body: body,
+        data: data || {}, // Attach extra data for navigation
+      });
+    }
+
+    // 3. Chunk and send notifications using the SDK
+    let chunks = expo.chunkPushNotifications(messages);
+    let tickets = [];
+
+    for (let chunk of chunks) {
+      let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+      tickets.push(...ticketChunk);
+      console.log("Sent notification chunk:", ticketChunk);
+    }
+
+    res.status(202).json({
+      message: "Broadcast initiated successfully!",
+      tickets: tickets,
+    });
+  } catch (error) {
+    console.error("Error sending broadcast:", error);
+    res.status(500).json({ error: "Failed to send broadcast." });
+  }
 });
 
-// ... (your other API endpoints)
+// >>> END: EXPO NOTIFICATION SETUP (4/4)
+
+// ... (your other endpoints: /api/articles, /api/fetch-multiple, etc.)
 app.get("/api/articles/:username", async (req, res) => {
   try {
     const { username } = req.params;
@@ -426,116 +420,101 @@ app.post("/api/fetch-multiple", async (req, res) => {
     } usernames in intervals of ${intervalMs / 1000} seconds`,
   });
 });
-
-// Replace your entire /api/formatted-tweet endpoint with this corrected version
-
-app.post("/api/formatted-tweet", async (req, res) => {
+app.get("/api/formatted-tweet/:tweetIds", async (req, res) => {
   try {
-    const { tweet_ids, categories, withGemini = true } = req.body;
-
-    if (!tweet_ids || !Array.isArray(tweet_ids) || tweet_ids.length === 0) {
-      return res.status(400).json({ error: "tweet_ids must be a non-empty array." });
+    const tweet_ids = req.params.tweetIds || req.query.tweet_ids;
+    if (!tweet_ids)
+      return res.status(400).json({ error: "tweet_ids required" });
+    const withGemini = req.query.withGemini !== "false";
+    const requestedHeight = req.query.h ? parseInt(req.query.h) : null;
+    const requestedWidth = req.query.w ? parseInt(req.query.w) : null;
+    const articleType = req.query.type || "tweet";
+    const categories = req.query.categories
+      ? req.query.categories.split(",").map((c) => c.trim())
+      : [];
+    const response = await fetch(
+      `https://api.twitterapi.io/twitter/tweets?tweet_ids=${tweet_ids}`,
+      { headers: { "x-api-key": process.env.TWITTER_API_KEY } }
+    );
+    const data = await response.json();
+    if (data.status !== "success" || !data.tweets || !data.tweets.length) {
+      return res
+        .status(404)
+        .json({
+          error: "Tweet(s) not found or API returned error",
+          rawResponse: data,
+        });
     }
-
-    const processingPromises = tweet_ids.map(async (tweetId) => {
-      const existingTweet = await FormattedTweet.findOne({ tweetId: tweetId }).lean();
-      
-      const response = await fetch(
-        `https://api.twitterapi.io/twitter/tweets?tweet_ids=${tweetId}`,
-        { headers: { "x-api-key": process.env.TWITTER_API_KEY } }
-      );
-      const data = await response.json();
-
-      if (data.status !== "success" || !data.tweets || !data.tweets.length) {
-        console.warn(`Could not fetch tweet with ID: ${tweetId}`);
-        return null;
-      }
-
-      const tweet = data.tweets[0];
-      
-      // Prepare the data to be saved/updated
-      const updateData = {
+    const formattedTweets = [];
+    for (const tweet of data.tweets) {
+      const ft = {
         tweetId: tweet.id,
         url: tweet.url,
         twitterUrl: tweet.twitterUrl,
         text: tweet.text,
         createdAt: new Date(tweet.createdAt),
         lang: tweet.lang,
-        type: "tweet",
-        // >>> CORRECTED: The full media mapping logic is now here
-        media: tweet.extendedEntities?.media?.map((m) => {
-            if (m.type === "photo") {
-              return {
-                type: "photo",
-                url: m.media_url_https || m.media_url,
-                width: m.sizes?.large?.w || null,
-                height: m.sizes?.large?.h || null,
-              };
-            } else if (m.type === "video" || m.type === "animated_gif") {
-              let height = 720;
-              let width = null;
-              if (m.video_info?.aspect_ratio) {
-                const [arW, arH] = m.video_info.aspect_ratio;
-                width = Math.round((arW / arH) * height);
+        type: articleType,
+        categories,
+        media:
+          tweet.extendedEntities?.media
+            ?.map((m) => {
+              if (m.type === "photo") {
+                return {
+                  type: "photo",
+                  url: m.media_url_https || m.media_url,
+                  width: requestedWidth || m.sizes?.large?.w || null,
+                  height: requestedHeight || m.sizes?.large?.h || null,
+                };
+              } else if (m.type === "video" || m.type === "animated_gif") {
+                let width = null;
+                let height = requestedHeight || 720;
+                if (m.video_info?.aspect_ratio) {
+                  const [arW, arH] = m.video_info.aspect_ratio;
+                  width = requestedWidth || Math.round((arW / arH) * height);
+                } else {
+                  width = requestedWidth || null;
+                }
+                return {
+                  type: m.type,
+                  variants:
+                    m.video_info?.variants?.map((v) => ({
+                      bitrate: v.bitrate || null,
+                      url: v.url,
+                    })) || [],
+                  width,
+                  height,
+                };
               }
-              return {
-                type: m.type,
-                variants: m.video_info?.variants?.map((v) => ({
-                    bitrate: v.bitrate || null,
-                    url: v.url,
-                  })) || [],
-                width,
-                height,
-              };
-            }
-            return null;
-          }).filter(Boolean) || [],
+              return null;
+            })
+            .filter(Boolean) || [],
       };
-
       if (withGemini) {
-        const geminiResult = await processWithGemini(updateData.text);
-        updateData.title = geminiResult.title;
-        updateData.summary = geminiResult.summary;
+        const geminiResult = await processWithGemini(ft.text);
+        ft.title = geminiResult.title;
+        ft.summary = geminiResult.summary;
       }
-
-      const savedPost = await FormattedTweet.findOneAndUpdate(
-        { tweetId: updateData.tweetId }, 
-        { 
-          $set: updateData,
-          $addToSet: { categories: { $each: categories || [] } }
-        }, 
-        { upsert: true, new: true }
-      );
-
-      if (!existingTweet && savedPost.categories && savedPost.categories.length > 0) {
-        console.log(`New post created (${savedPost.tweetId}). Triggering notifications.`);
-        for (const category of savedPost.categories) {
-          sendTargetedNotification({
-            title: savedPost.title,
-            category: category,
-            data: { url: `/post/${savedPost._id}` }
-          });
-        }
-      }
-      return savedPost;
-    });
-
-    const processedTweets = (await Promise.all(processingPromises)).filter(Boolean);
-
+      await FormattedTweet.findOneAndUpdate({ tweetId: ft.tweetId }, ft, {
+        upsert: true,
+        new: true,
+      });
+      formattedTweets.push(ft);
+    }
     res.json({
       status: "success",
-      message: `Processed ${processedTweets.length} tweets.`,
-      tweets: processedTweets,
+      withGemini,
+      requestedHeight,
+      requestedWidth,
+      articleType,
+      categories,
+      tweets: formattedTweets,
     });
-
   } catch (err) {
-    console.error("Error processing tweets:", err);
-    // Send back the specific error message for easier debugging
+    console.error("Error fetching tweets:", err);
     res.status(500).json({ error: "Server error", details: err.message });
   }
 });
-
-
 app.post("/api/summarize", async (req, res) => {
   try {
     const { text, url, source } = req.body;
@@ -620,38 +599,6 @@ app.get("/api/saved-tweets", async (req, res) => {
     res.status(500).json({ error: "Server error", details: err.message });
   }
 });
-
-// Add this new endpoint to your server.js
-
-app.get("/api/post/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ error: "Invalid Post ID format." });
-    }
-
-    // Try to find the post in the FormattedTweet collection first
-    let post = await FormattedTweet.findById(id).lean();
-
-    // If not found, try the Article collection
-    if (!post) {
-      post = await Article.findById(id).lean();
-    }
-
-    if (!post) {
-      return res.status(404).json({ error: "Post not found." });
-    }
-
-    res.json({ status: "success", post });
-
-  } catch (err) {
-    console.error("❌ Error fetching single post:", err);
-    res.status(500).json({ error: "Failed to fetch post", details: err.message });
-  }
-});
-
-
 app.put("/api/saved-tweets/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -862,57 +809,28 @@ app.patch("/api/saved-tweets/:id/publish", async (req, res) => {
   try {
     const { id } = req.params;
     const { published } = req.body;
-
     if (typeof published !== "boolean") {
-      return res.status(400).json({ error: "published must be a boolean" });
+      return res.status(400).json({ error: "published must be true or false" });
     }
-
-    // --- Find and update the post in either collection ---
-    let updatedPost = await FormattedTweet.findByIdAndUpdate(
+    let updated = await FormattedTweet.findByIdAndUpdate(
       id,
-      { isPublished: published }, // Corrected field name to 'isPublished'
+      { published },
       { new: true }
     );
-
-    if (!updatedPost) {
-      updatedPost = await Article.findByIdAndUpdate(
+    if (!updated) {
+      updated = await Article.findByIdAndUpdate(
         id,
-        { isPublished: published }, // Assuming Article schema also has 'isPublished'
+        { published },
         { new: true }
       );
     }
-
-    if (!updatedPost) {
+    if (!updated) {
       return res.status(404).json({ error: "Post not found" });
     }
-
-    // --- THIS IS THE NEW PART ---
-    // Trigger notifications only if the post is being published
-    if (published === true) {
-      console.log(`Post ${updatedPost._id} was published. Triggering notifications.`);
-      
-      const { title, summary, categories } = updatedPost;
-
-      if (categories && categories.length > 0) {
-        for (const category of categories) {
-          // Call your reusable notification function
-          sendTargetedNotification({
-            title: title,
-            body: summary,
-            category: category,
-            data: { url: `/post/${updatedPost._id}` } 
-          });
-        }
-      } else {
-        console.log("Post has no categories, no notifications sent.");
-      }
-    }
-    // ----------------------------
-
     res.json({
       status: "success",
       message: `Post ${published ? "published" : "unpublished"} successfully`,
-      post: updatedPost,
+      post: updated,
     });
   } catch (err) {
     console.error("❌ Error updating publish status:", err);
