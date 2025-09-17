@@ -461,7 +461,7 @@ app.post("/api/formatted-tweet", async (req, res) => {
         text: tweet.text,
         createdAt: new Date(tweet.createdAt),
         lang: tweet.lang,
-        type: "tweet",
+        type: "normal_post",
         // >>> CORRECTED: The full media mapping logic is now here
         media: tweet.extendedEntities?.media?.map((m) => {
             if (m.type === "photo") {
