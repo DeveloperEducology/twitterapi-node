@@ -179,6 +179,7 @@ const formattedTweetSchema = new mongoose.Schema(
     twitterUrl: String,
     text: String,
     title: String,
+    imageUrl: String,
     summary: String,
     type: String,
     createdAt: Date,
@@ -429,7 +430,7 @@ app.post("/api/fetch-multiple", async (req, res) => {
 
 // Replace your entire /api/formatted-tweet endpoint with this corrected version
 
-app.post("/api/formatted-tweet", async (req, res) => {
+app.post("/api/formatted-tweet1", async (req, res) => {
   try {
     const { tweet_ids, categories, withGemini = true } = req.body;
 
@@ -461,7 +462,7 @@ app.post("/api/formatted-tweet", async (req, res) => {
         text: tweet.text,
         createdAt: new Date(tweet.createdAt),
         lang: tweet.lang,
-        type: "normal_post",
+        type: "tweet",
         // >>> CORRECTED: The full media mapping logic is now here
         media: tweet.extendedEntities?.media?.map((m) => {
             if (m.type === "photo") {
@@ -534,6 +535,131 @@ app.post("/api/formatted-tweet", async (req, res) => {
     res.status(500).json({ error: "Server error", details: err.message });
   }
 });
+
+
+app.post("/api/formatted-tweet", async (req, res) => {
+  try {
+    const { tweet_ids, categories, withGemini = true } = req.body;
+
+    if (!tweet_ids || !Array.isArray(tweet_ids) || tweet_ids.length === 0) {
+      return res.status(400).json({ error: "tweet_ids must be a non-empty array." });
+    }
+
+    const processingPromises = tweet_ids.map(async (tweetId) => {
+      const existingTweet = await FormattedTweet.findOne({ tweetId: tweetId }).lean();
+      
+      const response = await fetch(
+        `https://api.twitterapi.io/twitter/tweets?tweet_ids=${tweetId}`,
+        { headers: { "x-api-key": process.env.TWITTER_API_KEY } }
+      );
+      const data = await response.json();
+
+      if (data.status !== "success" || !data.tweets || !data.tweets.length) {
+        console.warn(`Could not fetch tweet with ID: ${tweetId}`);
+        return null;
+      }
+
+      const tweet = data.tweets[0];
+      
+      // Prepare the data to be saved/updated
+      const updateData = {
+        tweetId: tweet.id,
+        url: tweet.url,
+        twitterUrl: tweet.twitterUrl,
+        text: tweet.text,
+        createdAt: new Date(tweet.createdAt),
+        lang: tweet.lang,
+        type: "normal_post",
+        imageUrl: tweet.extendedEntities?.media?.[0]?.media_url_https 
+                  || tweet.media_url_https 
+                  || null,
+        media: tweet.extendedEntities?.media?.map((m) => {
+            if (m.type === "photo") {
+              return {
+                type: "photo",
+                url: m.media_url_https || m.media_url,
+                width: m.sizes?.large?.w || null,
+                height: m.sizes?.large?.h || null,
+              };
+            } else if (m.type === "video" || m.type === "animated_gif") {
+              // >>> CORRECTED: Find and save only the lowest bitrate video variant
+              const validVariants = m.video_info?.variants?.filter(v => typeof v.bitrate === 'number' && v.url) || [];
+
+              if (validVariants.length === 0) {
+                  return null; // No valid variants found
+              }
+
+              // Find the variant with the lowest bitrate
+              const lowestBitrateVariant = validVariants.reduce((lowest, current) => {
+                return current.bitrate < lowest.bitrate ? current : lowest;
+              });
+
+              let height = 720;
+              let width = null;
+              if (m.video_info?.aspect_ratio) {
+                const [arW, arH] = m.video_info.aspect_ratio;
+                width = Math.round((arW / arH) * height);
+              }
+
+              return {
+                type: m.type,
+                // Store only the lowest bitrate variant in an array for consistent schema
+                variants: [{
+                    bitrate: lowestBitrateVariant.bitrate,
+                    url: lowestBitrateVariant.url,
+                }],
+                width,
+                height,
+              };
+            }
+            return null;
+          }).filter(Boolean) || [],
+      };
+
+      if (withGemini) {
+        const geminiResult = await processWithGemini(updateData.text);
+        updateData.title = geminiResult.title;
+        updateData.summary = geminiResult.summary;
+      }
+
+      const savedPost = await FormattedTweet.findOneAndUpdate(
+        { tweetId: updateData.tweetId }, 
+        { 
+          $set: updateData,
+          $addToSet: { categories: { $each: categories || [] } }
+        }, 
+        { upsert: true, new: true }
+      );
+
+      if (!existingTweet && savedPost.categories && savedPost.categories.length > 0) {
+        console.log(`New post created (${savedPost.tweetId}). Triggering notifications.`);
+        for (const category of savedPost.categories) {
+          sendTargetedNotification({
+            title: savedPost.title,
+            category: category,
+            data: { url: `/post/${savedPost._id}` }
+          });
+        }
+      }
+      return savedPost;
+    });
+
+    const processedTweets = (await Promise.all(processingPromises)).filter(Boolean);
+
+    res.json({
+      status: "success",
+      message: `Processed ${processedTweets.length} tweets.`,
+      tweets: processedTweets,
+    });
+
+  } catch (err) {
+    console.error("Error processing tweets:", err);
+    // Send back the specific error message for easier debugging
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
+
 
 
 app.post("/api/summarize", async (req, res) => {
