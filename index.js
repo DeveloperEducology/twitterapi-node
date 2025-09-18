@@ -15,7 +15,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 const SELF_URL =
-  process.env.SERVER_URL || "https://twitterapi-7313.onrender.com";
+  process.env.SERVER_URL || "https://twitterapi-node.onrender.com";
 
 // Helper functions
 function containsTelugu(text) {
