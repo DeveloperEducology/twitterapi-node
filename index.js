@@ -15,7 +15,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 const SELF_URL =
-  process.env.SERVER_URL || "https://twitterapi-node.onrender.com";
+  process.env.SERVER_URL || "https://twitterapi-7313.onrender.com";
 
 // Helper functions
 function containsTelugu(text) {
@@ -168,6 +168,7 @@ const TweetCache = mongoose.model("TweetCache", cacheSchema);
 const mediaSchema = new mongoose.Schema({
   type: { type: String, required: true },
   url: { type: String },
+  proxyUrl: { type: String }, // ✅ ADD THIS LINE
   variants: [{ bitrate: { type: Number }, url: { type: String } }],
   width: { type: Number },
   height: { type: Number },
@@ -537,7 +538,7 @@ app.post("/api/formatted-tweet1", async (req, res) => {
 });
 
 
-app.post("/api/formatted-tweet", async (req, res) => {
+app.post("/api/formatted-tweet2", async (req, res) => {
   try {
     const { tweet_ids, categories, withGemini = true } = req.body;
 
@@ -659,6 +660,136 @@ app.post("/api/formatted-tweet", async (req, res) => {
   }
 });
 
+
+
+// ✅ FIX: This is the endpoint you wanted to fix.
+app.post("/api/formatted-tweet", async (req, res) => {
+  try {
+    const { tweet_ids, categories, withGemini = true } = req.body;
+
+    if (!tweet_ids || !Array.isArray(tweet_ids) || tweet_ids.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "tweet_ids must be a non-empty array." });
+    }
+
+    const processingPromises = tweet_ids.map(async (tweetId) => {
+      const existingTweet = await FormattedTweet.findOne({
+        tweetId: tweetId,
+      }).lean();
+
+      const response = await fetch(
+        `https://api.twitterapi.io/twitter/tweets?tweet_ids=${tweetId}`,
+        { headers: { "x-api-key": process.env.TWITTER_API_KEY } }
+      );
+      const data = await response.json();
+
+      if (data.status !== "success" || !data.tweets || !data.tweets.length) {
+        console.warn(`Could not fetch tweet with ID: ${tweetId}`);
+        return null;
+      }
+
+      const tweet = data.tweets[0];
+
+      const updateData = {
+        tweetId: tweet.id,
+        url: tweet.url,
+        twitterUrl: tweet.twitterUrl,
+        text: tweet.text,
+        createdAt: new Date(tweet.createdAt),
+        lang: tweet.lang,
+        type: "normal_post",
+        imageUrl:
+          tweet.extendedEntities?.media?.[0]?.media_url_https ||
+          tweet.media_url_https ||
+          null,
+        media:
+          tweet.extendedEntities?.media
+            ?.map((m) => {
+              if (m.type === "photo") {
+                return {
+                  type: "photo",
+                  url: m.media_url_https || m.media_url,
+                  width: m.sizes?.large?.w || null,
+                  height: m.sizes?.large?.h || null,
+                };
+              } else if (m.type === "video" || m.type === "animated_gif") {
+                
+                // Construct the reliable proxy URL
+                const proxyUrl = tweet.twitterUrl.replace('twitter.com', 'fxtwitter.com');
+
+                let height = 720;
+                let width = null;
+                if (m.video_info?.aspect_ratio) {
+                  const [arW, arH] = m.video_info.aspect_ratio;
+                  width = Math.round((arW / arH) * height);
+                }
+
+                return {
+                  type: m.type,
+                  proxyUrl: proxyUrl, // <-- SAVE THE PROXY URL
+                  variants:
+                    m.video_info?.variants?.map((v) => ({
+                      bitrate: v.bitrate || null,
+                      url: v.url,
+                    })) || [],
+                  width,
+                  height,
+                };
+              }
+              return null;
+            })
+            .filter(Boolean) || [],
+      };
+
+      if (withGemini) {
+        const geminiResult = await processWithGemini(updateData.text);
+        updateData.title = geminiResult.title;
+        updateData.summary = geminiResult.summary;
+      }
+
+      const savedPost = await FormattedTweet.findOneAndUpdate(
+        { tweetId: updateData.tweetId },
+        {
+          $set: updateData,
+          $addToSet: { categories: { $each: categories || [] } },
+        },
+        { upsert: true, new: true }
+      );
+
+      if (
+        !existingTweet &&
+        savedPost.categories &&
+        savedPost.categories.length > 0
+      ) {
+        console.log(
+          `New post created (${savedPost.tweetId}). Triggering notifications.`
+        );
+        for (const category of savedPost.categories) {
+          sendTargetedNotification({
+            title: savedPost.title,
+            category: category,
+            data: { url: `/post/${savedPost._id}` },
+          });
+        }
+      }
+      return savedPost;
+    });
+
+    const processedTweets = (await Promise.all(processingPromises)).filter(
+      Boolean
+    );
+
+    res.json({
+      status: "success",
+      message: `Processed ${processedTweets.length} tweets.`,
+      tweets: processedTweets,
+    });
+  } catch (err) {
+    console.error("Error processing tweets:", err);
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
 
 
 
