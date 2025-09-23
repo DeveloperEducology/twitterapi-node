@@ -312,7 +312,6 @@ function classifyArticle(text) {
 }
 
 
-// ✅ REVISED: Added a debugging block to inspect existing posts
 async function savePost(postData) {
     const { categories, topCategory } = classifyArticle(postData.title + " " + (postData.text || ""));
     postData.categories = categories;
@@ -321,22 +320,6 @@ async function savePost(postData) {
 
     const identifier = postData.url ? { url: postData.url } : { tweetId: postData.tweetId };
     
-    // --- DEBUGGING BLOCK START ---
-    // This block will run before trying to save, to see what's already in the DB
-    try {
-        const existingPost = await FormattedTweet.findOne(identifier).lean();
-        if (existingPost) {
-            console.log('\n--- DEBUG: Found Existing Post ---');
-            console.log(`Query Identifier:`, identifier);
-            console.log(`Existing Post ID: ${existingPost._id}`);
-            console.log(`Existing Post Title: ${existingPost.title}`);
-            console.log('---------------------------------\n');
-        }
-    } catch (debugError) {
-        console.error('--- DEBUG: Error during findOne check ---', debugError);
-    }
-    // --- DEBUGGING BLOCK END ---
-
     try {
         const result = await FormattedTweet.updateOne(
             identifier,
@@ -384,9 +367,11 @@ async function fetchAllNewsSources() {
             console.log(`   Found ${feed.items.length} items in ${source.name}`);
             
             for (const item of feed.items) {
-                try {
+                try { // Handle bad items gracefully
                     if (!item.link || !item.title) continue;
+
                     const imageUrl = extractImageFromItem(item);
+                    
                     const saved = await savePost({
                         title: item.title,
                         summary: cleanHtmlContent(item.contentSnippet || item.description || ""),
@@ -399,7 +384,9 @@ async function fetchAllNewsSources() {
                         media: imageUrl ? [{ type: 'photo', url: imageUrl }] : [],
                         lang: containsTelugu(item.title) ? 'te' : 'en',
                     });
+
                     if (saved) newPostsCount++;
+
                 } catch (itemError) {
                     console.error(`   ❌ Failed to process item: "${item.title?.slice(0, 50)}..."`, itemError.message);
                 }
