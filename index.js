@@ -13,11 +13,10 @@ import Parser from "rss-parser";
 dotenv.config();
 const app = express();
 const expo = new Expo();
-// ✅ REVISED: Added customFields to better parse media tags from some RSS feeds
 const parser = new Parser({
   customFields: {
-    item: [['media:content', 'media:content']],
-  }
+    item: [["media:content", "media:content"]],
+  },
 });
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -45,32 +44,45 @@ const RSS_SOURCES = [
 // Helper functions
 // ========================
 
+// ✅ THIS HELPER FUNCTION WAS MISSING
+function normalizeUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    // Rebuild the URL using only the essential parts (protocol, host, path)
+    return `${url.protocol}//${url.hostname}${url.pathname}`;
+  } catch (error) {
+    // If the URL is invalid, return it as is to avoid a crash
+    return urlString;
+  }
+}
+
 function containsTelugu(text) {
   if (!text) return false;
   return /[\u0C00-\u0C7F]/.test(text);
 }
 
-// ✅ NEW HELPER: Strips HTML tags and cleans up text content.
 function cleanHtmlContent(html) {
   if (!html) return "";
   const $ = cheerio.load(html);
-  // Replace line breaks with spaces and collapse multiple spaces
-  const text = $.text().replace(/(\r\n|\n|\r)/gm, " ").replace(/\s+/g, ' ').trim();
+  const text = $.text()
+    .replace(/(\r\n|\n|\r)/gm, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return text;
 }
 
-// ✅ NEW HELPER: Reliably extracts the first image from an RSS item.
 function extractImageFromItem(item) {
-  if (item.enclosure?.url && item.enclosure.type?.startsWith('image')) {
+  if (item.enclosure?.url && item.enclosure.type?.startsWith("image")) {
     return item.enclosure.url;
   }
-  if (item['media:content']?.$?.url) {
-    return item['media:content'].$.url;
+  if (item["media:content"]?.$?.url) {
+    return item["media:content"].$.url;
   }
-  const content = item['content:encoded'] || item.content || item.description || '';
+  const content =
+    item["content:encoded"] || item.content || item.description || "";
   if (content) {
     const $ = cheerio.load(content);
-    const firstImgSrc = $('img').first().attr('src');
+    const firstImgSrc = $("img").first().attr("src");
     if (firstImgSrc) {
       return firstImgSrc;
     }
@@ -106,26 +118,12 @@ async function processWithGemini(text) {
 
 async function sendTargetedNotification({ title, body, category, data }) {
   try {
-    console.log(
-      `\n[DIAGNOSTIC] 1. Starting notification process for category: "${category}"`
-    );
-
-    // Find tokens subscribed to the specific category
     const savedTokens = await ExpoPushToken.find({
       subscribedCategories: category,
     });
     const pushTokens = savedTokens.map((t) => t.token);
+    if (pushTokens.length === 0) return;
 
-    console.log(
-      `[DIAGNOSTIC] 2. Found ${pushTokens.length} token(s) for this category.`
-    );
-
-    if (pushTokens.length === 0) {
-      console.log(`[DIAGNOSTIC] --> Process stopped. No devices to notify.`);
-      return;
-    }
-
-    // Create messages
     let messages = [];
     for (let pushToken of pushTokens) {
       if (Expo.isExpoPushToken(pushToken)) {
@@ -138,41 +136,14 @@ async function sendTargetedNotification({ title, body, category, data }) {
         });
       }
     }
-    console.log(
-      `[DIAGNOSTIC] 3. Created ${messages.length} valid notification messages.`
-    );
 
-    // Chunk and send notifications
     const chunks = expo.chunkPushNotifications(messages);
-    console.log(
-      `[DIAGNOSTIC] 4. Split messages into ${chunks.length} chunk(s). Sending now...`
-    );
-
     for (let chunk of chunks) {
-      let tickets = await expo.sendPushNotificationsAsync(chunk);
-
-      tickets.forEach((ticket, index) => {
-        const pushToken = chunk[index].to;
-        if (ticket.status === "ok") {
-          console.log(
-            `✅ Notification for token ${pushToken} accepted by Expo. Ticket ID: ${ticket.id}`
-          );
-        } else {
-          console.error(
-            `❌ Notification for token ${pushToken} failed. Reason: ${ticket.details.error}`
-          );
-          if (ticket.details.error === "DeviceNotRegistered") {
-            console.log(`Removing inactive token: ${pushToken}`);
-            ExpoPushToken.deleteOne({ token: pushToken }).catch((e) =>
-              console.error(e)
-            );
-          }
-        }
-      });
+      await expo.sendPushNotificationsAsync(chunk);
     }
   } catch (error) {
     console.error(
-      `[DIAGNOSTIC] --> An error occurred during the process for category '${category}':`,
+      `Error sending notification for category '${category}':`,
       error
     );
   }
@@ -197,14 +168,9 @@ app.use(express.json());
 // ========================
 // MongoDB Models
 // ========================
-
 const expoPushTokenSchema = new mongoose.Schema(
   {
-    token: {
-      type: String,
-      required: true,
-      unique: true,
-    },
+    token: { type: String, required: true, unique: true },
     subscribedCategories: [{ type: String }],
   },
   { timestamps: true }
@@ -230,12 +196,14 @@ const articleSchema = new mongoose.Schema(
   { timestamps: true }
 );
 const Article = mongoose.model("Article", articleSchema);
+
 const cacheSchema = new mongoose.Schema({
   username: { type: String, unique: true },
   tweets: Array,
   lastFetched: Date,
 });
 const TweetCache = mongoose.model("TweetCache", cacheSchema);
+
 const mediaSchema = new mongoose.Schema({
   type: { type: String, required: true },
   url: { type: String },
@@ -247,19 +215,30 @@ const mediaSchema = new mongoose.Schema({
 const formattedTweetSchema = new mongoose.Schema(
   {
     tweetId: { type: String, unique: true, required: true },
-    url: String,
+    url: { type: String, unique: true, sparse: true }, // Canonical URL, sparse allows nulls
     twitterUrl: String,
     text: String,
     title: String,
     imageUrl: String,
     summary: String,
     topCategory: { type: String, index: true },
-    type: { type: String, default: 'normal_post' },
+    type: { type: String, default: "normal_post" },
     videoUrl: String,
     createdAt: Date,
     lang: String,
     media: [mediaSchema],
-    sourceType: { type: String, enum: ['rss', 'tweet_api', 'tweet_scrape', 'manual', 'youtube', 'web_story'], required: false },
+    sourceType: {
+      type: String,
+      enum: [
+        "rss",
+        "tweet_api",
+        "tweet_scrape",
+        "manual",
+        "youtube",
+        "web_story",
+      ],
+      required: false,
+    },
     isBookmarked: { type: Boolean, default: false },
     isPublished: { type: Boolean, default: true },
     categories: [{ type: String }],
@@ -273,7 +252,6 @@ const FormattedTweet = mongoose.model("FormattedTweet", formattedTweetSchema);
 // ========================
 // Express + MongoDB Setup
 // ========================
-app.use(express.json());
 const PORT = 4000;
 mongoose
   .connect(process.env.MONGO_URI)
@@ -283,127 +261,192 @@ const client = new TwitterApiClient(process.env.TWITTER_API_KEY);
 
 // --- Data Handling & Classification ---
 function classifyArticle(text) {
-    const keywords = {
-        Sports: ['cricket', 'football', 'tennis', 'ipl', 'bcci', 'icc', 'sports'],
-        Entertainment: ['movie', 'cinema', 'actor', 'actress', 'music', 'song', 'tollywood', 'bollywood'],
-        Politics: ['election', 'minister', 'government', 'bjp', 'congress', 'modi', 'rahul', 'politics'],
-        National: ['india', 'delhi', 'mumbai', 'national'],
-        International: ['world', 'usa', 'china', 'un', 'war', 'international'],
-        Telangana: ['telangana', 'hyderabad', 'kcr', 'ktr'],
-        AndhraPradesh: ['andhra pradesh', 'amaravati', 'vizag', 'jagan'],
-        Viral: ['viral', 'trending'],
-    };
-    const categories = new Set();
-    let topCategory = 'General';
-    let maxCount = 0;
-    const lowerText = text.toLowerCase();
+  const keywords = {
+    Sports: ["cricket", "football", "tennis", "ipl", "bcci", "icc", "sports"],
+    Entertainment: [
+      "movie",
+      "cinema",
+      "actor",
+      "actress",
+      "music",
+      "song",
+      "tollywood",
+      "bollywood",
+    ],
+    Politics: [
+      "election",
+      "minister",
+      "government",
+      "bjp",
+      "congress",
+      "modi",
+      "rahul",
+      "politics",
+    ],
+    National: ["india", "delhi", "mumbai", "national"],
+    International: ["world", "usa", "china", "un", "war", "international"],
+    Telangana: ["telangana", "hyderabad", "kcr", "ktr"],
+    AndhraPradesh: ["andhra pradesh", "amaravati", "vizag", "jagan"],
+    Viral: ["viral", "trending"],
+  };
+  const categories = new Set();
+  let topCategory = "General";
+  let maxCount = 0;
+  const lowerText = text.toLowerCase();
 
-    for (const [category, words] of Object.entries(keywords)) {
-        const count = words.reduce((acc, word) => acc + (lowerText.includes(word) ? 1 : 0), 0);
-        if (count > 0) {
-            categories.add(category);
-            if (count > maxCount) {
-                maxCount = count;
-                topCategory = category;
-            }
-        }
+  for (const [category, words] of Object.entries(keywords)) {
+    const count = words.reduce(
+      (acc, word) => acc + (lowerText.includes(word) ? 1 : 0),
+      0
+    );
+    if (count > 0) {
+      categories.add(category);
+      if (count > maxCount) {
+        maxCount = count;
+        topCategory = category;
+      }
     }
-    return { categories: Array.from(categories), topCategory };
+  }
+  return { categories: Array.from(categories), topCategory };
 }
-
 
 async function savePost(postData) {
-    const { categories, topCategory } = classifyArticle(postData.title + " " + (postData.text || ""));
-    postData.categories = categories;
-    postData.topCategory = topCategory;
-    postData.imageUrl = postData.imageUrl || postData.media?.[0]?.url || null;
+  const { categories, topCategory } = classifyArticle(
+    postData.title + " " + (postData.text || "")
+  );
+  postData.categories = categories;
+  postData.topCategory = topCategory;
+  postData.imageUrl = postData.imageUrl || postData.media?.[0]?.url || null;
 
-    const identifier = postData.url ? { url: postData.url } : { tweetId: postData.tweetId };
-    
-    try {
-        const result = await FormattedTweet.updateOne(
-            identifier,
-            { $setOnInsert: postData },
-            { upsert: true }
-        );
-        if (result.upsertedCount > 0) {
-            console.log(`✅ Saved new post: "${postData.title.slice(0,30)}..." from ${postData.source}`);
-            return true;
-        }
-        return false;
-    } catch (error) {
-        if (error.code === 11000) {
-            console.warn(`⚠️ Post already exists, skipping: ${postData.url || postData.tweetId}`);
-        } else {
-            console.error("Error saving post:", error.message);
-        }
-        return false;
+  const identifier = postData.url
+    ? { url: postData.url }
+    : { tweetId: postData.tweetId };
+
+  try {
+    const result = await FormattedTweet.updateOne(
+      identifier,
+      { $setOnInsert: postData },
+      { upsert: true }
+    );
+    if (result.upsertedCount > 0) {
+      console.log(
+        `✅ Saved new post: "${postData.title.slice(0, 30)}..." from ${
+          postData.source
+        }`
+      );
+      return true;
     }
+    return false;
+  } catch (error) {
+    if (error.code === 11000) {
+      console.warn(
+        `⚠️ Post already exists, skipping: ${postData.url || postData.tweetId}`
+      );
+    } else {
+      console.error("Error saving post:", error.message);
+    }
+    return false;
+  }
 }
-
 
 // ========================
 // Cron Jobs
 // ========================
-const HF_API_TOKEN = process.env.HF_API_TOKEN;
 cron.schedule("*/5 * * * *", async () => {
   try {
     const res = await fetch(SELF_URL);
-    console.log("Self-ping status:", res.status, new Date().toLocaleTimeString());
+    console.log(
+      "Self-ping status:",
+      res.status,
+      new Date().toLocaleTimeString()
+    );
   } catch (err) {
     console.error("Self-ping failed:", err);
   }
 });
 
-// ✅ REVISED: The main RSS fetching logic is now more robust.
 async function fetchAllNewsSources() {
-    console.log("⏰ Cron: Starting RSS feed processing...");
-    let newPostsCount = 0;
+  console.log("⏰ Cron: Starting RSS feed processing...");
+  let newPostsCount = 0;
 
-    for (const source of RSS_SOURCES) {
-        console.log(`-- Fetching from: ${source.name}`);
+  for (const source of RSS_SOURCES) {
+    console.log(`-- Fetching from: ${source.name}`);
+    try {
+      const feed = await parser.parseURL(source.url);
+      console.log(`   Found ${feed.items.length} items in ${source.name}`);
+
+      for (const item of feed.items) {
         try {
-            const feed = await parser.parseURL(source.url);
-            console.log(`   Found ${feed.items.length} items in ${source.name}`);
-            
-            for (const item of feed.items) {
-                try { // Handle bad items gracefully
-                    if (!item.link || !item.title) continue;
+          if (!item.link || !item.title) continue;
 
-                    const imageUrl = extractImageFromItem(item);
-                    
-                    const saved = await savePost({
-                        title: item.title,
-                        summary: cleanHtmlContent(item.contentSnippet || item.description || ""),
-                        text: cleanHtmlContent(item.content || ""),
-                        url: item.link,
-                        source: source.name,
-                        sourceType: 'rss',
-                        publishedAt: new Date(item.pubDate),
-                        imageUrl: imageUrl,
-                        media: imageUrl ? [{ type: 'photo', url: imageUrl }] : [],
-                        lang: containsTelugu(item.title) ? 'te' : 'en',
-                    });
+          const imageUrl = extractImageFromItem(item);
 
-                    if (saved) newPostsCount++;
+          // ✅ THIS LINE USES THE HELPER FUNCTION
+          const cleanUrl = normalizeUrl(item.link);
 
-                } catch (itemError) {
-                    console.error(`   ❌ Failed to process item: "${item.title?.slice(0, 50)}..."`, itemError.message);
-                }
-            }
-        } catch (error) {
-            console.error(`❌ Failed to fetch entire RSS feed from ${source.name}: ${error.message}`);
+          const saved = await savePost({
+            title: item.title,
+            summary: cleanHtmlContent(
+              item.contentSnippet || item.description || ""
+            ),
+            text: cleanHtmlContent(item.content || ""),
+            url: cleanUrl,
+            source: source.name,
+            sourceType: "rss",
+            publishedAt: new Date(item.pubDate),
+            imageUrl: imageUrl,
+            media: imageUrl ? [{ type: "photo", url: imageUrl }] : [],
+            lang: containsTelugu(item.title) ? "te" : "en",
+          });
+
+          if (saved) newPostsCount++;
+        } catch (itemError) {
+          console.error(
+            `   ❌ Failed to process item: "${item.title?.slice(0, 50)}..."`,
+            itemError.message
+          );
         }
+      }
+    } catch (error) {
+      console.error(
+        `❌ Failed to fetch entire RSS feed from ${source.name}: ${error.message}`
+      );
     }
-    console.log(`✅ Cron: RSS fetching complete. Added ${newPostsCount} new posts.`);
+  }
+  console.log(
+    `✅ Cron: RSS fetching complete. Added ${newPostsCount} new posts.`
+  );
 }
 cron.schedule("*/30 * * * *", fetchAllNewsSources);
 
+// ... Other cron jobs can be placed here ...
+
+// ========================
+// API Endpoints
+// ========================
+
+cron.schedule("*/5 * * * *", async () => {
+  try {
+    const res = await fetch(SELF_URL);
+    console.log(
+      "Self-ping status:",
+      res.status,
+      new Date().toLocaleTimeString()
+    );
+  } catch (err) {
+    console.error("Self-ping failed:", err);
+  }
+});
+
+cron.schedule("*/30 * * * *", fetchAllNewsSources);
+
 cron.schedule("*/55 * * * *", async () => {
-    console.log("⏰ Cron: Auto-fetching tweets for specified users via API...");
-    for (const username of AUTO_FETCH_USERS) {
-        console.log(`Would fetch for ${username}... (logic in /api/formatted-tweet)`);
-    }
+  console.log("⏰ Cron: Auto-fetching tweets for specified users via API...");
+  for (const username of AUTO_FETCH_USERS) {
+    console.log(
+      `Would fetch for ${username}... (logic in /api/formatted-tweet)`
+    );
+  }
 });
 
 async function summarizeText(text) {
@@ -539,10 +582,9 @@ app.post("/api/register-token", async (req, res) => {
   }
 });
 
-
 app.get("/api/fetch-news-manual", async (req, res) => {
-    await fetchAllNewsSources();
-    res.json({ message: "Manual news fetch process initiated." });
+  await fetchAllNewsSources();
+  res.json({ message: "Manual news fetch process initiated." });
 });
 
 app.post("/api/broadcast", async (req, res) => {
@@ -681,7 +723,11 @@ app.post("/api/formatted-tweet", async (req, res) => {
                 }
                 return {
                   type: m.type,
-                  variants: m.video_info?.variants?.map((v) => ({ bitrate: v.bitrate || null, url: v.url })) || [],
+                  variants:
+                    m.video_info?.variants?.map((v) => ({
+                      bitrate: v.bitrate || null,
+                      url: v.url,
+                    })) || [],
                   width,
                   height,
                 };
@@ -725,7 +771,9 @@ app.post("/api/formatted-tweet", async (req, res) => {
       return savedPost;
     });
 
-    const processedTweets = (await Promise.all(processingPromises)).filter(Boolean);
+    const processedTweets = (await Promise.all(processingPromises)).filter(
+      Boolean
+    );
 
     res.json({
       status: "success",
@@ -742,18 +790,28 @@ app.post("/api/new-post", async (req, res) => {
   try {
     const postData = req.body;
     if (!postData.title || !postData.summary) {
-      return res.status(400).json({ message: "Title and summary are required." });
+      return res
+        .status(400)
+        .json({ message: "Title and summary are required." });
     }
     if (!postData.tweetId) {
       postData.tweetId = Date.now().toString();
     }
     const newFormattedTweet = new FormattedTweet(postData);
     const savedPost = await newFormattedTweet.save();
-    res.status(201).json({ status: "success", message: "New post created successfully.", post: savedPost });
+    res
+      .status(201)
+      .json({
+        status: "success",
+        message: "New post created successfully.",
+        post: savedPost,
+      });
   } catch (err) {
     console.error("Error creating new formatted tweet:", err);
     if (err.name === "ValidationError") {
-      return res.status(400).json({ message: "Validation Error", details: err.message });
+      return res
+        .status(400)
+        .json({ message: "Validation Error", details: err.message });
     }
     res.status(500).json({ message: "Server error", details: err.message });
   }
@@ -768,9 +826,14 @@ app.post("/api/summarize", async (req, res) => {
     const prompt = isTelugu
       ? ` You are a professional Telugu news journalist. Task: Create TWO outputs in Telugu from the following text: 1. **Title** → A short, catchy news headline in Telugu (8–12 words). - Must feel like a professional Telugu newspaper headline. - No English, no transliteration. - No quotes or section labels. 2. **Summary** → A news-style article body (65–80 words). - Formal, informative, neutral journalistic tone. - Undestand the context of each word - Clear, concise, newspaper-ready style. - No headings, no extra formatting. Text: ${text} Return result strictly in JSON: { "title": "…", "summary": "…" } `
       : ` You are a professional Telugu news journalist. The input is in English. Translate it into Telugu and then create TWO outputs: 1. **Title** → A short, catchy Telugu news headline (8–12 words). - Must feel like a professional Telugu newspaper headline. - No English, no transliteration. - No quotes or section labels. 2. **Summary** → A news-style article body (65–80 words). - clearly understand user intent. -Think in what context he is saying. -write user name, as he shares his context - Formal, informative, neutral journalistic tone. - Clear underastanding of english to telugu translating relevently. - Clear, concise, newspaper-ready style. - No headings, no extra formatting. English Text: ${text} Return result strictly in JSON: { "title": "…", "summary": "…" } `;
-    const response = await genAI.getGenerativeModel({ model: "gemini-1.5-flash" }).generateContent(prompt);
+    const response = await genAI
+      .getGenerativeModel({ model: "gemini-1.5-flash" })
+      .generateContent(prompt);
     let content = response.response.text().trim();
-    content = content.replace(/```json/g, "").replace(/```/g, "").trim();
+    content = content
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
     let parsed;
     try {
       parsed = JSON.parse(content);
@@ -779,18 +842,28 @@ app.post("/api/summarize", async (req, res) => {
       parsed = { title: "", summary: content };
     }
     let { title, summary } = parsed;
-    const fallbackImage = "https://cdn.pixabay.com/photo/2017/06/26/19/03/news-2444778_960_720.jpg";
+    const fallbackImage =
+      "https://cdn.pixabay.com/photo/2017/06/26/19/03/news-2444778_960_720.jpg";
     if (!title) title = isTelugu ? text.slice(0, 50) : "తెలుగు వార్త శీర్షిక";
     if (!summary) summary = text.slice(0, 200) + "...";
     const article = await Article.findOneAndUpdate(
       { url },
-      { title, summary, url, source: source || "manual", media: [{ type: "image", url: fallbackImage }], publishedAt: new Date() },
+      {
+        title,
+        summary,
+        url,
+        source: source || "manual",
+        media: [{ type: "image", url: fallbackImage }],
+        publishedAt: new Date(),
+      },
       { upsert: true, new: true }
     );
     res.json({ status: "success", article });
   } catch (err) {
     console.error("❌ Summarize error:", err);
-    res.status(500).json({ error: "Failed to summarize text", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Failed to summarize text", details: err.message });
   }
 });
 
@@ -803,10 +876,19 @@ app.get("/api/saved-tweets", async (req, res) => {
       FormattedTweet.find().lean(),
       Article.find({ source: "manual" }).lean(),
     ]);
-    const combined = [...tweets, ...articles].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const combined = [...tweets, ...articles].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
     const total = combined.length;
     const paginated = combined.slice(skip, skip + limit);
-    res.json({ status: "success", page, limit, total, totalPages: Math.ceil(total / limit), posts: paginated });
+    res.json({
+      status: "success",
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      posts: paginated,
+    });
   } catch (err) {
     console.error("Error fetching saved tweets and articles:", err);
     res.status(500).json({ error: "Server error", details: err.message });
@@ -829,7 +911,9 @@ app.get("/api/post/:id", async (req, res) => {
     res.json({ status: "success", post });
   } catch (err) {
     console.error("❌ Error fetching single post:", err);
-    res.status(500).json({ error: "Failed to fetch post", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Failed to fetch post", details: err.message });
   }
 });
 
@@ -839,9 +923,24 @@ app.put("/api/saved-tweets/:id", async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ error: "Invalid post ID" });
     }
-    const { title, summary, type, text, url, imageUrl, categories, media, isBookmarked, isPublished, isStory, isShowReadButton } = req.body;
-    if (categories && !Array.isArray(categories)) return res.status(400).json({ error: "categories must be an array" });
-    if (media && !Array.isArray(media)) return res.status(400).json({ error: "media must be an array" });
+    const {
+      title,
+      summary,
+      type,
+      text,
+      url,
+      imageUrl,
+      categories,
+      media,
+      isBookmarked,
+      isPublished,
+      isStory,
+      isShowReadButton,
+    } = req.body;
+    if (categories && !Array.isArray(categories))
+      return res.status(400).json({ error: "categories must be an array" });
+    if (media && !Array.isArray(media))
+      return res.status(400).json({ error: "media must be an array" });
     const updateData = {
       ...(title && { title }),
       ...(summary && { summary }),
@@ -873,22 +972,30 @@ app.put("/api/saved-tweets/:id", async (req, res) => {
       Object.assign(doc, updateData);
       updated = await doc.save();
     } else {
-      updated = await FormattedTweet.findByIdAndUpdate(id, updateData, { new: true });
+      updated = await FormattedTweet.findByIdAndUpdate(id, updateData, {
+        new: true,
+      });
       if (!updated) {
-        updated = await Article.findByIdAndUpdate(id, updateData, { new: true });
+        updated = await Article.findByIdAndUpdate(id, updateData, {
+          new: true,
+        });
       }
     }
     res.json({ status: "success", post: updated });
   } catch (err) {
     console.error("❌ Error updating post:", err);
-    res.status(500).json({ error: "Failed to update post", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Failed to update post", details: err.message });
   }
 });
 
 app.get("/api/curated-feed", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
-    const categories = req.query.categories ? req.query.categories.split(",").map((c) => c.trim()) : [];
+    const categories = req.query.categories
+      ? req.query.categories.split(",").map((c) => c.trim())
+      : [];
     const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
     let posts = [];
     let nextCursor = null;
@@ -905,16 +1012,27 @@ app.get("/api/curated-feed", async (req, res) => {
     if (categories.length > 0) {
       usedCategories = true;
       const tweetQuery = { categories: { $in: categories } };
-      const articleQuery = { categories: { $in: categories }, source: "manual" };
+      const articleQuery = {
+        categories: { $in: categories },
+        source: "manual",
+      };
       if (cursor) {
         tweetQuery.createdAt = { $lt: cursor };
         articleQuery.createdAt = { $lt: cursor };
       }
       const [tweets, articles] = await Promise.all([
-        FormattedTweet.find(tweetQuery).sort({ createdAt: -1 }).limit(limit * 2).lean(),
-        Article.find(articleQuery).sort({ createdAt: -1 }).limit(limit * 2).lean(),
+        FormattedTweet.find(tweetQuery)
+          .sort({ createdAt: -1 })
+          .limit(limit * 2)
+          .lean(),
+        Article.find(articleQuery)
+          .sort({ createdAt: -1 })
+          .limit(limit * 2)
+          .lean(),
       ]);
-      posts = dedupe([...tweets, ...articles]).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, limit);
+      posts = dedupe([...tweets, ...articles])
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, limit);
       if (posts.length > 0) {
         nextCursor = posts[posts.length - 1].createdAt;
       }
@@ -927,15 +1045,30 @@ app.get("/api/curated-feed", async (req, res) => {
         articleQuery.createdAt = { $lt: cursor };
       }
       const [tweets, articles] = await Promise.all([
-        FormattedTweet.find(tweetQuery).sort({ createdAt: -1 }).limit(limit * 2).lean(),
-        Article.find(articleQuery).sort({ createdAt: -1 }).limit(limit * 2).lean(),
+        FormattedTweet.find(tweetQuery)
+          .sort({ createdAt: -1 })
+          .limit(limit * 2)
+          .lean(),
+        Article.find(articleQuery)
+          .sort({ createdAt: -1 })
+          .limit(limit * 2)
+          .lean(),
       ]);
-      posts = dedupe([...tweets, ...articles]).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, limit);
+      posts = dedupe([...tweets, ...articles])
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, limit);
       if (posts.length > 0) {
         nextCursor = posts[posts.length - 1].createdAt;
       }
     }
-    res.json({ status: "success", limit, posts, nextCursor, usedCategories, fallback: posts.length === 0 && categories.length > 0 });
+    res.json({
+      status: "success",
+      limit,
+      posts,
+      nextCursor,
+      usedCategories,
+      fallback: posts.length === 0 && categories.length > 0,
+    });
   } catch (err) {
     console.error("Error fetching curated feed:", err);
     res.status(500).json({ status: "error", message: err.message });
@@ -946,10 +1079,17 @@ app.post("/api/youtube-post", async (req, res) => {
   try {
     const { url, title } = req.body;
     if (!url || !title) {
-      return res.status(400).json({ status: "error", message: "Both 'url' and 'title' are required in the request body." });
+      return res
+        .status(400)
+        .json({
+          status: "error",
+          message: "Both 'url' and 'title' are required in the request body.",
+        });
     }
     if (!url.includes("youtube.com") && !url.includes("youtu.be")) {
-      return res.status(400).json({ status: "error", message: "Invalid YouTube URL provided." });
+      return res
+        .status(400)
+        .json({ status: "error", message: "Invalid YouTube URL provided." });
     }
     const newYoutubePost = {
       tweetId: `yt_${new Date().getTime()}`,
@@ -966,7 +1106,9 @@ app.post("/api/youtube-post", async (req, res) => {
     res.status(201).json({ status: "success", post: savedPost });
   } catch (err) {
     console.error("❌ Error creating YouTube post:", err);
-    res.status(500).json({ error: "Failed to create YouTube post", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Failed to create YouTube post", details: err.message });
   }
 });
 
@@ -980,10 +1122,16 @@ app.delete("/api/saved-tweets/:id", async (req, res) => {
     if (!deleted) {
       return res.status(404).json({ error: "Post not found" });
     }
-    res.json({ status: "success", message: "Post deleted successfully", post: deleted });
+    res.json({
+      status: "success",
+      message: "Post deleted successfully",
+      post: deleted,
+    });
   } catch (err) {
     console.error("❌ Error deleting post:", err);
-    res.status(500).json({ error: "Failed to delete post", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Failed to delete post", details: err.message });
   }
 });
 
@@ -994,28 +1142,49 @@ app.patch("/api/saved-tweets/:id/publish", async (req, res) => {
     if (typeof published !== "boolean") {
       return res.status(400).json({ error: "published must be a boolean" });
     }
-    let updatedPost = await FormattedTweet.findByIdAndUpdate(id, { isPublished: published }, { new: true });
+    let updatedPost = await FormattedTweet.findByIdAndUpdate(
+      id,
+      { isPublished: published },
+      { new: true }
+    );
     if (!updatedPost) {
-      updatedPost = await Article.findByIdAndUpdate(id, { isPublished: published }, { new: true });
+      updatedPost = await Article.findByIdAndUpdate(
+        id,
+        { isPublished: published },
+        { new: true }
+      );
     }
     if (!updatedPost) {
       return res.status(404).json({ error: "Post not found" });
     }
     if (published === true) {
-      console.log(`Post ${updatedPost._id} was published. Triggering notifications.`);
+      console.log(
+        `Post ${updatedPost._id} was published. Triggering notifications.`
+      );
       const { title, summary, categories } = updatedPost;
       if (categories && categories.length > 0) {
         for (const category of categories) {
-          sendTargetedNotification({ title: title, body: summary, category: category, data: { url: `/post/${updatedPost._id}` } });
+          sendTargetedNotification({
+            title: title,
+            body: summary,
+            category: category,
+            data: { url: `/post/${updatedPost._id}` },
+          });
         }
       } else {
         console.log("Post has no categories, no notifications sent.");
       }
     }
-    res.json({ status: "success", message: `Post ${published ? "published" : "unpublished"} successfully`, post: updatedPost });
+    res.json({
+      status: "success",
+      message: `Post ${published ? "published" : "unpublished"} successfully`,
+      post: updatedPost,
+    });
   } catch (err) {
     console.error("❌ Error updating publish status:", err);
-    res.status(500).json({ error: "Failed to update publish status", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Failed to update publish status", details: err.message });
   }
 });
 
