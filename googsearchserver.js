@@ -1,15 +1,20 @@
 // Import necessary modules
-require('dotenv').config();
-const express = require('express');
-const axios = require('axios');
+require("dotenv").config();
+const express = require("express");
+const axios = require("axios");
 
 // --- Centralized Configuration ---
 const config = {
-    PORT: process.env.PORT || 3000,
-    SERPER_API_URL: 'https://google.serper.dev/search',
-    GEMINI_API_URL: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
-    // SOURCES_TO_USE is no longer needed as we are fetching all sources.
+  PORT: process.env.PORT || 3000,
+  SERPER_API_URL: "https://google.serper.dev/search",
+  // Corrected the URL from 'generativelen' to 'generativelanguage'
+  GEMINI_API_URL: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
+  CACHE_DURATION_MS: 10 * 60 * 1000, // 10 minutes
 };
+
+// --- In-Memory Cache ---
+// A simple Map to store results with keys as search topics.
+const cache = new Map();
 
 // Initialize Express app
 const app = express();
@@ -17,133 +22,239 @@ const app = express();
 // Middleware to parse JSON request bodies
 app.use(express.json());
 
-
 /**
  * Queries the Serper.dev API to get search results for a given topic.
  * @param {string} query - The topic to search for.
- * @returns {Promise<{context: string, sources: Array<{title: string, link: string, snippet: string, rank: number, publishedDate: string|null}>}|null>} An object containing the context and all sources, or null if not found.
+ * @returns {Promise<object|null>} An object with context and sources, or null.
  */
 async function getSearchContext(query) {
-    const SERPER_API_KEY = process.env.SERPER_API_KEY;
-    if (!SERPER_API_KEY) {
-        throw new Error('SERPER_API_KEY is not defined in your .env file.');
+  const SERPER_API_KEY = process.env.SERPER_API_KEY;
+  if (!SERPER_API_KEY) {
+    throw new Error("SERPER_API_KEY is not defined in your .env file.");
+  }
+
+  console.log(`[Serper] 🔍 Searching for: "${query}"`);
+
+  const payload = JSON.stringify({ q: query });
+
+  try {
+    const response = await axios.post(config.SERPER_API_URL, payload, {
+      headers: {
+        "X-API-KEY": SERPER_API_KEY,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const organicResults = response.data.organic;
+
+    if (!organicResults || organicResults.length === 0) {
+      console.log("[Serper] 📪 No organic results found.");
+      return null;
     }
-    
-    console.log(`[Serper] 🔍 Searching for: "${query}"`);
-    
-    const payload = JSON.stringify({ "q": query });
 
-    try {
-        const response = await axios.post(config.SERPER_API_URL, payload, {
-            headers: {
-                'X-API-KEY': SERPER_API_KEY,
-                'Content-Type': 'application/json'
-            }
-        });
+    const sources = organicResults.map((item) => ({
+      title: item.title,
+      link: item.link,
+      snippet: item.snippet,
+      rank: item.position,
+      publishedDate: item.date || null,
+    }));
 
-        const organicResults = response.data.organic;
+    const context = sources
+      .map((s) => s.snippet)
+      .join(" ... ")
+      .replace(/\n/g, "");
 
-        if (!organicResults || organicResults.length === 0) {
-            console.log('[Serper] 📪 No organic results found.');
-            return null;
-        }
-        
-        // --- IMPROVEMENT: Map ALL sources and add rank and published date ---
-        const sources = organicResults.map(item => ({
-            title: item.title,
-            link: item.link,
-            snippet: item.snippet,
-            rank: item.position, // Add the organic rank
-            publishedDate: item.date || null // Add the published date, fallback to null
-        }));
+    console.log(`[Serper] 📝 Context created from ${sources.length} sources.`);
 
-        // Create a single context string from all the snippets
-        const context = sources.map(s => s.snippet).join(' ... ').replace(/\n/g, '');
-        
-        console.log(`[Serper] 📝 Context created from ${sources.length} sources.`);
-        
-        return { context, sources };
-
-    } catch (error) {
-        console.error('[Serper] Error fetching search results:', error.response ? error.response.data : error.message);
-        throw new Error('Failed to retrieve context from Serper API.');
-    }
+    return { context, sources };
+  } catch (error) {
+    console.error(
+      "[Serper] Error fetching search results:",
+      error.response ? error.response.data : error.message
+    );
+    throw new Error("Failed to retrieve context from Serper API.");
+  }
 }
-
 
 /**
- * Generates a news article using the Gemini API based on the provided context.
- * @param {string} context - The context string from search results.
- * @returns {Promise<string>} The generated news article text.
+ * Generates a news article using Gemini API or a fallback summary.
+ * @param {object} searchResult - The object containing context and sources.
+ * @returns {Promise<string>} The generated news article or fallback text.
  */
-async function generateNewsArticle(context) {
-    const prompt = `Based on the following information: "${context}". Please act as a professional news editor. Write a news article in Telugu with a suitable, compelling title. The article body must be a single paragraph and should not exceed 65 words.`;
+async function generateNewsArticle(searchResult) {
+  const prompt = `Based on the following information: "${searchResult.context}". Please act as a professional news editor. Write a news article in Telugu with a suitable, compelling title. The article body must be a single paragraph and should not exceed 65 words.`;
 
-    const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-            temperature: 0.7,
-            topK: 1,
-            topP: 1,
-            maxOutputTokens: 256,
-        },
-    };
+  const payload = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.7,
+      topK: 1,
+      topP: 1,
+      maxOutputTokens: 256,
+    },
+  };
 
-    try {
-        console.log('[Gemini] 🧠 Generating news article...');
-        const response = await axios.post(config.GEMINI_API_URL, payload);
-        
-        if (response.data.candidates && response.data.candidates.length > 0) {
-            console.log('[Gemini] ✅ Article generated successfully.');
-            return response.data.candidates[0].content.parts[0].text;
-        }
-        throw new Error('No content generated by the model.');
+  try {
+    console.log("[Gemini] 🧠 Generating news article...");
+    const response = await axios.post(config.GEMINI_API_URL, payload);
 
-    } catch (error) {
-        console.error('[Gemini] Error generating article:', error.response ? error.response.data : error.message);
-        throw new Error('Failed to generate news article with Gemini API.');
+    if (response.data.candidates && response.data.candidates.length > 0) {
+      console.log("[Gemini] ✅ Article generated successfully.");
+      return response.data.candidates[0].content.parts[0].text;
     }
+    throw new Error("No content generated by the model.");
+  } catch (error) {
+    if (error.response && error.response.status === 503) {
+      console.warn(
+        "[Gemini] ⚠️ Service is unavailable (503). Generating fallback summary."
+      );
+
+      const fallbackTitle = `**సారాంశం: ${searchResult.sources[0].title}**`;
+      const fallbackBody = searchResult.sources
+        .slice(0, 3)
+        .map((s) => s.snippet)
+        .join(" ... ");
+
+      return `${fallbackTitle}\n\n${fallbackBody}`;
+    }
+
+    console.error(
+      "[Gemini] Error generating article:",
+      error.response ? error.response.data : error.message
+    );
+    throw new Error("Failed to generate news article with Gemini API.");
+  }
 }
 
-
 // --- API Endpoint ---
-app.get('/generate-news', async (req, res) => {
-    const topic = req.query.topic?.trim();
+app.get("/generate-news", async (req, res) => {
+  // Sanitize and normalize the topic to use as a cache key
+  const topic = req.query.topic?.trim().toLowerCase();
 
-    if (!topic) {
-        return res.status(400).json({ error: 'A "topic" query parameter is required.' });
-    }
+  if (!topic) {
+    return res
+      .status(400)
+      .json({ error: 'A "topic" query parameter is required.' });
+  }
 
-    console.log(`\n----------------------------------------`);
-    console.log(`[Request] Received job for topic: ${topic}`);
+  // --- NEW: Check cache first ---
+  if (cache.has(topic)) {
+    console.log(`\n[Cache] ⚡ Cache HIT for topic: ${topic}`);
+    return res.status(200).json(cache.get(topic));
+  }
 
-    try {
-        const searchResult = await getSearchContext(topic);
+  console.log(`\n----------------------------------------`);
+  console.log(`[Cache] 📪 Cache MISS for topic: ${topic}`);
+  console.log(`[Request] Received job for topic: ${topic}`);
 
-        if (!searchResult || searchResult.sources.length === 0) {
-            return res.status(404).json({ error: 'Could not find any relevant information on the topic.' });
-        }
-        
-        const newsArticle = await generateNewsArticle(searchResult.context);
-        
-        res.status(200).json({
-            topic: topic,
-            newsArticle: newsArticle,
-            sources: searchResult.sources 
-        });
+  try {
+    const searchResult = await getSearchContext(topic);
 
-    } catch (error) {
-        console.error(`[Request] Failed job for topic "${topic}":`, error.message);
-        res.status(500).json({ 
-            error: 'An internal server error occurred.',
-            details: error.message
+    if (!searchResult || searchResult.sources.length === 0) {
+      return res
+        .status(404)
+        .json({
+          error: "Could not find any relevant information on the topic.",
         });
     }
+
+    const newsArticle = await generateNewsArticle(searchResult);
+
+    const responsePayload = {
+      topic: topic,
+      newsArticle: newsArticle,
+      sources: searchResult.sources,
+    };
+
+    // --- NEW: Store the successful result in the cache ---
+    cache.set(topic, responsePayload);
+    console.log(`[Cache] ✅ Stored result for topic: "${topic}"`);
+
+    // --- NEW: Set a timer to expire the cache entry ---
+    setTimeout(() => {
+      cache.delete(topic);
+      console.log(`[Cache] 🗑️ Expired cache for topic: "${topic}"`);
+    }, config.CACHE_DURATION_MS);
+
+    res.status(200).json(responsePayload);
+  } catch (error) {
+    console.error(`[Request] Failed job for topic "${topic}":`, error.message);
+    res.status(500).json({
+      error: "An internal server error occurred.",
+      details: error.message,
+    });
+  }
 });
 
+app.get("/trending-news", async (req, res) => {
+  try {
+    const response = await axios.get("https://serpapi.com/search", {
+      params: {
+        engine: "google_trends",
+        geo: "IN",
+        hl: "en",
+        tz: 330,
+        api_key:
+          "36a53b0fd673789d2de3f2fafafb0ad97c6786d341fd765aba30f3ef01d7b0af",
+      },
+    });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch trending news" });
+  }
+});
+
+// --- API Endpoint: Trending News ---
+app.get("/trending-news", async (req, res) => {
+  const topic = "trending"; // Use a generic trending query
+
+  // Check cache first
+  if (cache.has(topic)) {
+    console.log(`[Cache] ⚡ Cache HIT for trending news`);
+    return res.status(200).json(cache.get(topic));
+  }
+
+  console.log(`[Request] Fetching trending news from Google via Serper`);
+
+  try {
+    // Serper query: "latest news" or "trending news"
+    const searchResult = await getSearchContext("latest trending news");
+
+    if (!searchResult || searchResult.sources.length === 0) {
+      return res.status(404).json({ error: "Could not fetch trending news." });
+    }
+
+    const newsArticle = await generateNewsArticle(searchResult);
+
+    const responsePayload = {
+      topic: "Trending News",
+      newsArticle,
+      sources: searchResult.sources,
+    };
+
+    // Store in cache
+    cache.set(topic, responsePayload);
+    setTimeout(() => cache.delete(topic), config.CACHE_DURATION_MS);
+
+    res.status(200).json(responsePayload);
+  } catch (error) {
+    console.error("[Trending News] Error:", error.message);
+    res.status(500).json({
+      error: "Failed to fetch trending news.",
+      details: error.message,
+    });
+  }
+});
 
 // Start the server
 app.listen(config.PORT, () => {
-    console.log(`✅ News API server is running on http://localhost:${config.PORT}`);
-    console.log(`🔗 Make requests to: http://localhost:${config.PORT}/generate-news?topic=your_topic`);
+  console.log(
+    `✅ News API server is running on http://localhost:${config.PORT}`
+  );
+  console.log(
+    `🔗 Make requests to: http://localhost:${config.PORT}/generate-news?topic=your_topic`
+  );
 });

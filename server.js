@@ -33,11 +33,12 @@ const AUTO_FETCH_USERS = process.env.AUTO_USERS
 const RSS_SOURCES = [
   { url: "https://ntvtelugu.com/feed", name: "NTV Telugu" },
   { url: "https://tv9telugu.com/feed", name: "TV9 Telugu" },
-  { url: "https://www.ntnews.com/rss", name: "Namasthe Telangana" },
-  {
-    url: "https://www.thehindu.com/news/national/feeder/default.rss",
-    name: "The Hindu",
-  },
+  "https://telugu.hindustantimes.com/rss/sports",
+  // { url: "https://www.ntnews.com/rss", name: "Namasthe Telangana" },
+  // {
+  //   url: "https://www.thehindu.com/news/national/feeder/default.rss",
+  //   name: "The Hindu",
+  // },
   { url: "https://feeds.feedburner.com/ndtvnews-latest", name: "NDTV News" },
 ];
 
@@ -49,27 +50,37 @@ const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 // 2. MONGODB SETUP & MODELS
 // =================================================================
 
-// --- Main Unified Post Schema ---
-const mediaSchema = new mongoose.Schema({
-  type: {
-    type: String,
-    required: true,
-    enum: ["photo", "video", "animated_gif", "youtube_link"],
+// Define a simple sub-schema for media to be used within the Post schema
+const mediaSchema = new mongoose.Schema(
+  {
+    type: { type: String, enum: ["photo", "video", "animated_gif"] },
+    url: String, // For photos
+    variants: [
+      {
+        bitrate: Number,
+        url: String,
+      },
+    ], // For videos
+    width: Number,
+    height: Number,
   },
-  url: { type: String },
-  variants: [{ bitrate: { type: Number }, url: { type: String } }],
-});
+  { _id: false }
+);
 
 const postSchema = new mongoose.Schema(
   {
     // Core Content
-    title: { type: String, required: true },
-    summary: String,
+    title: { type: String, required: true, index: "text" },
+    summary: { type: String, index: "text" },
     text: String,
     url: { type: String, unique: true, sparse: true }, // sparse allows multiple docs to have null
     imageUrl: String,
     media: [mediaSchema],
     videoUrl: String,
+
+    // ✅ 1. ADD THIS FIELD TO STORE RELATED STORIES
+    // This creates an array of references to other documents within the 'Post' collection.
+    relatedStories: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
 
     // Metadata
     source: String,
@@ -86,12 +97,16 @@ const postSchema = new mongoose.Schema(
     topCategory: { type: String, index: true },
     isPublished: { type: Boolean, default: true, index: true },
     type: { type: String, default: "normal_post" },
+
     // Source-Specific Data
     tweetId: { type: String, unique: true, sparse: true },
     twitterUrl: String,
   },
   { timestamps: true, collection: "posts" }
 );
+
+// To improve performance of related stories lookup
+postSchema.index({ categories: 1, publishedAt: -1 });
 
 const Post = mongoose.model("Post", postSchema);
 
@@ -330,6 +345,103 @@ async function fetchAllNewsSources() {
 }
 cron.schedule("*/30 * * * *", fetchAllNewsSources);
 
+// ✅ ===============================================================
+// ✅ START: NEW & CORRECTED ENDPOINTS FOR ADMIN DASHBOARD
+// ✅ ===============================================================
+
+// GET ALL POSTS WITH PAGINATION (FOR ADMIN DASHBOARD)
+app.get("/api/posts", async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const posts = await Post.find()
+      .sort({ publishedAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const totalPosts = await Post.countDocuments();
+    const totalPages = Math.ceil(totalPosts / limit);
+
+    res.json({
+      status: "success",
+      posts,
+      page,
+      totalPages,
+      totalPosts,
+    });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// GET A SINGLE POST BY ID (Unchanged, but good to have here)
+app.get("/api/post/:id", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid Post ID format." });
+    }
+    const post = await Post.findById(req.params.id).lean();
+    if (!post) return res.status(404).json({ error: "Post not found." });
+    res.json({ status: "success", post });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: "Failed to fetch post", details: err.message });
+  }
+});
+
+// CREATE A NEW POST (FOR ADMIN DASHBOARD)
+app.post("/api/post", async (req, res) => {
+  try {
+    // You can add validation here if needed
+    const newPost = new Post(req.body);
+    await newPost.save();
+    res.status(201).json({ status: "success", post: newPost });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: "Failed to create post", details: err.message });
+  }
+});
+
+// UPDATE A POST BY ID (Corrected for Dashboard)
+app.put("/api/post/:id", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid post ID" });
+    }
+    const updatedPost = await Post.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+    });
+    if (!updatedPost) return res.status(404).json({ error: "Post not found" });
+    res.json({ status: "success", post: updatedPost });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: "Failed to update post", details: err.message });
+  }
+});
+
+// DELETE A POST BY ID (Corrected for Dashboard)
+app.delete("/api/post/:id", async (req, res) => {
+  try {
+    const deleted = await Post.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Post not found" });
+    res.json({ status: "success", message: "Post deleted successfully" });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: "Failed to delete post", details: err.message });
+  }
+});
+
+// ✅ ===============================================================
+// ✅ END: NEW & CORRECTED ENDPOINTS FOR ADMIN DASHBOARD
+// ✅ ===============================================================
+
 // =================================================================
 // 6. API ENDPOINTS
 // =================================================================
@@ -483,23 +595,66 @@ app.get("/api/fetch-news-manual", async (req, res) => {
   res.json({ message: "Manual news fetch process initiated." });
 });
 
+
 app.get("/api/curated-feed", async (req, res) => {
   try {
+    // --- Step 1: Log the incoming request query from the URL ---
+    console.log("-----------------------------------------");
+    console.log("Incoming req.query:", req.query);
+
     const limit = parseInt(req.query.limit) || 20;
     const categories = req.query.categories
       ? req.query.categories.split(",").map((c) => c.trim())
       : [];
     const cursor = req.query.cursor ? new Date(req.query.cursor) : new Date();
+    const source = req.query.source;
+    console.log(source, categories, cursor);
 
+    // Check if the provided cursor is a valid date
+    if (isNaN(cursor.getTime())) {
+      console.error("Invalid cursor date provided:", req.query.cursor);
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid cursor format. Please use a valid ISO date string.",
+      });
+    }
+
+    // --- Step 2: Build the query object ---
     const query = { isPublished: true, publishedAt: { $lt: cursor } };
+
     if (categories.length > 0) {
       query.categories = { $in: categories };
     }
 
+    if (source) {
+      // Use a case-insensitive regex for better matching
+      query.source = { $regex: `^${source}$`, $options: "i" };
+    }
+
+    // --- Step 3: NEW - Check for matches before applying the date filter ---
+    const preDateQuery = { ...query };
+    delete preDateQuery.publishedAt; // Temporarily remove date to see if other filters match
+
+    const matchingDocsCount = await Post.countDocuments(preDateQuery);
+    console.log(
+      `Pre-check: Found ${matchingDocsCount} documents matching source/category before applying the date filter.`
+    );
+
+    // --- Step 4: Log the final query that will be sent to MongoDB ---
+    console.log("Final MongoDB Query:", JSON.stringify(query, null, 2));
+
+    // ✅ MODIFICATION: Added .populate() to fetch related story details
     const posts = await Post.find(query)
       .sort({ publishedAt: -1 })
       .limit(limit)
+      .populate('relatedStories', '_id title summary imageUrl') // Populate with essential fields
       .lean();
+
+    // --- Step 5: Log the result ---
+    console.log(
+      `Final Result: Found ${posts.length} posts after applying all filters.`
+    );
+    console.log("-----------------------------------------");
 
     let nextCursor = null;
     if (posts.length === limit) {
@@ -508,9 +663,31 @@ app.get("/api/curated-feed", async (req, res) => {
 
     res.json({ status: "success", posts, nextCursor });
   } catch (err) {
+    console.error("💥 Error in /api/curated-feed:", err);
     res.status(500).json({ status: "error", message: err.message });
   }
 });
+
+
+
+// Find this endpoint in your server.js
+app.get("/api/post/:id", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid Post ID format." });
+    }
+    // ✅ CHANGE THIS LINE
+    const post = await Post.findById(req.params.id)
+      .populate('relatedStories', '_id title') // Populate with _id and title
+      .lean();
+      
+    if (!post) return res.status(404).json({ error: "Post not found." });
+    res.json({ status: "success", post });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch post", details: err.message });
+  }
+});
+
 
 app.get("/api/post/:id", async (req, res) => {
   try {
@@ -541,6 +718,30 @@ app.put("/api/post/:id", async (req, res) => {
     res
       .status(500)
       .json({ error: "Failed to update post", details: err.message });
+  }
+});
+
+// Searches for posts by title and summary
+app.get("/api/posts/search", async (req, res) => {
+  try {
+    const searchQuery = req.query.q;
+    console.log(searchQuery);
+    if (!searchQuery) {
+      return res.json([]);
+    }
+    const posts = await Post.find({
+      $or: [
+        { title: { $regex: searchQuery, $options: "i" } },
+        { summary: { $regex: searchQuery, $options: "i" } },
+      ],
+    })
+      .sort({ publishedAt: -1 })
+      .limit(10)
+      .select("title summary source publishedAt")
+      .lean();
+    res.json(posts);
+  } catch (error) {
+    res.status(500).json({ message: "Search failed" });
   }
 });
 
