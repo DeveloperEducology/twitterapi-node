@@ -1113,6 +1113,35 @@ app.get("/", (req, res) => res.send("API Server is running."));
 // =================================================================
 // ✅ NEW ENDPOINT: FETCH & STORE IMAGE URLS FROM 'posts' COLLECTION
 // =================================================================
+// ✅ NEW ENDPOINT: Fetch Paginated Images from saved_image_data
+app.get("/api/images", async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 24;
+        const skip = (page - 1) * limit;
+
+        const images = await ImageModel.find({})
+            .sort({ createdAt: -1 }) // Sort by newest first
+            .skip(skip)
+            .limit(limit)
+            .select("imageUrl title _id") // Only return necessary fields
+            .lean();
+
+        const totalImages = await ImageModel.countDocuments({});
+        const totalPages = Math.ceil(totalImages / limit);
+
+        res.json({
+            status: "success",
+            images: images,
+            page,
+            totalPages,
+            totalImages,
+        });
+    } catch (err) {
+        console.error("❌ Error fetching image gallery data:", err);
+        res.status(500).json({ status: "error", message: "Failed to fetch image gallery data." });
+    }
+});
 
 
 // ✅ NEW ENDPOINT: FETCH & STORE IMAGE URLS FROM 'posts' COLLECTION
