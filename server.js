@@ -24,7 +24,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MONGO_URI = process.env.MONGO_URI;
 const TWITTER_API_IO_KEY = process.env.TWITTER_API_KEY;
 const PORT = process.env.PORT || 4000;
-const SELF_URL = process.env.SERVER_URL || `https://twitterapi-node.onrender.com`;
+const SELF_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
 
 // --- Source Lists ---
 const AUTO_FETCH_USERS = process.env.AUTO_USERS
@@ -88,16 +88,18 @@ const postSchema = new mongoose.Schema(
       type: String,
       enum: ["rss", "tweet_api", "manual", "youtube"],
       required: true,
+      default: "manual"
     },
     publishedAt: { type: Date, default: Date.now, index: true },
     lang: String,
+    isBreaking: { type: Boolean, default: false }, // ✅ ADD THIS LINE
 
     // Classification & Flags
     categories: [{ type: String, index: true }],
     topCategory: { type: String, index: true },
     isPublished: { type: Boolean, default: true, index: true },
     type: { type: String, default: "normal_post" },
-
+    scheduledFor: { type: Date, default: null }, // ✅ ADD THIS LINE
     // Source-Specific Data
     tweetId: { type: String, unique: true, sparse: true },
     twitterUrl: String,
@@ -207,25 +209,588 @@ function extractImageFromItem(item) {
   return $("img").first().attr("src") || null;
 }
 
+app.get("/api/classify-all", async (req, res) => {
+  try {
+    // Fetch only unclassified articles
+    const articles = await Post.find({
+      $or: [{ categories: { $exists: false } }, { categories: { $size: 0 } }],
+    });
+
+    let updated = 0;
+
+    for (let article of articles) {
+      try {
+        const { categories, topCategory } = classifyArticle(
+          `${article.title || ""} ${article.summary || ""} ${
+            article.text || ""
+          }`
+        );
+
+        if (categories.length > 0) {
+          article.categories = categories;
+          article.topCategory = topCategory;
+          await article.save();
+          updated++;
+          console.log(
+            `✅ Classified: "${article.title}" → [${categories.join(
+              ", "
+            )}] (Top: ${topCategory})`
+          );
+        } else {
+          console.log(`⚠️ No match for: "${article.title}"`);
+        }
+      } catch (err) {
+        console.error(`❌ Error classifying: "${article.title}"`, err);
+      }
+    }
+
+    res.json({
+      message: "Classification complete",
+      totalChecked: articles.length,
+      updated,
+    });
+  } catch (err) {
+    console.error("🔥 Error in classify-all:", err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+// Classification function
 function classifyArticle(text) {
   const keywords = {
-    Sports: ["cricket", "football", "tennis", "ipl", "sports"],
-    Entertainment: ["movie", "cinema", "actor", "actress", "music"],
-    Politics: ["election", "minister", "government", "bjp", "congress", "modi"],
-    National: ["india", "delhi", "mumbai", "national"],
-    International: ["world", "usa", "china", "un", "war"],
-    Telangana: ["telangana", "hyderabad", "kcr", "ktr"],
-    AndhraPradesh: ["andhra pradesh", "amaravati", "vizag", "jagan"],
+    Sports: [
+      "cricket",
+      "football",
+      "tennis",
+      "ipl",
+      "sports",
+      "hockey",
+      "badminton",
+      "kabaddi",
+      "olympics",
+      "t20",
+      "odi",
+      "world cup",
+      "stadium",
+      "match",
+      "tournament",
+      "league",
+      "goal",
+      "bat",
+      "ball",
+      "wicket",
+      "umpire",
+      "captain",
+      "క్రికెట్",
+      "ఫుట్‌బాల్",
+      "టెన్నిస్",
+      "హాకీ",
+      "బ్యాడ్మింటన్",
+      "కబడ్డీ",
+      "ఐపీఎల్",
+      "వరల్డ్ కప్",
+      "మ్యాచ్",
+      "ఆట",
+      "జట్టు",
+      "ప్లేయర్",
+      "ప్రేక్షకులు",
+    ],
+
+    Entertainment: [
+      "movie",
+      "cinema",
+      "film",
+      "actor",
+      "actress",
+      "hero",
+      "heroine",
+      "star",
+      "celebrity",
+      "director",
+      "producer",
+      "music",
+      "song",
+      "album",
+      "trailer",
+      "teaser",
+      "box office",
+      "Tollywood",
+      "Bollywood",
+      "Hollywood",
+      "web series",
+      "OTT",
+      "award",
+      "shooting",
+      "release",
+      "blockbuster",
+      "flop",
+      "సినిమా",
+      "చిత్రం",
+      "నటుడు",
+      "నటి",
+      "హీరో",
+      "హీరోయిన్",
+      "దర్శకుడు",
+      "సంగీతం",
+      "పాట",
+      "ట్రైలర్",
+      "హిట్",
+      "ఫ్లాప్",
+      "టాలీవుడ్",
+      "బాలీవుడ్",
+    ],
+
+    Politics: [
+      "election",
+      "vote",
+      "minister",
+      "government",
+      "mla",
+      "mp",
+      "parliament",
+      "assembly",
+      "narendra modi",
+      "modi",
+      "prime minister modi",
+      "నరేంద్ర మోదీ",
+      "amit shah",
+      "rahul gandhi",
+      "sonia gandhi",
+      "priyanka gandhi",
+      "arvind kejriwal",
+      "mamata banerjee",
+      "nitish kumar",
+      "droupadi murmu",
+      "president murmu",
+      "ద్రౌపది ముర్ము",
+      "justice chandrachud",
+      "chief justice",
+      "revanth reddy",
+      "kcr",
+      "ktr",
+      "asaduddin owaisi",
+      "jagan reddy",
+      "chandrababu naidu",
+      "pawan kalyan",
+      "nara lokesh",
+      "ys rajasekhara reddy",
+      "nt rama rao",
+      "atal bihari vajpayee",
+      "indira gandhi",
+      "rajiv gandhi",
+      "manmohan singh",
+      "nehru",
+      "abdul kalam",
+      "ఎన్నికలు",
+      "ఓటు",
+      "మంత్రి",
+      "ప్రభుత్వం",
+      "పార్టీ",
+      "ఎమ్మెల్యే",
+      "ఎంపీ",
+    ],
+
+    National: [
+      "india",
+      "bharat",
+      "delhi",
+      "mumbai",
+      "chennai",
+      "kolkata",
+      "bangalore",
+      "supreme court",
+      "high court",
+      "constitution",
+      "army",
+      "navy",
+      "air force",
+      "economy",
+      "inflation",
+      "reserve bank",
+      "isro",
+      "science",
+      "technology",
+      "farmers",
+      "youth",
+      "culture",
+      "festival",
+      "strike",
+      "protest",
+      "భారతదేశం",
+      "జాతీయ",
+      "స్వాతంత్ర్యం",
+      "గణతంత్ర",
+      "సైన్యం",
+      "సుప్రీం కోర్ట్",
+    ],
+
+    International: [
+      "world",
+      "global",
+      "international",
+      "foreign",
+      "usa",
+      "america",
+      "china",
+      "pakistan",
+      "russia",
+      "uk",
+      "france",
+      "germany",
+      "italy",
+      "japan",
+      "korea",
+      "australia",
+      "canada",
+      "un",
+      "united nations",
+      "war",
+      "peace",
+      "summit",
+      "diplomacy",
+      "terrorism",
+      "ప్రపంచం",
+      "అంతర్జాతీయ",
+      "అమెరికా",
+      "చైనా",
+      "పాకిస్తాన్",
+      "రష్యా",
+      "జర్మనీ",
+      "జపాన్",
+    ],
+
+    Telangana: [
+      "telangana",
+      "hyderabad",
+      "warangal",
+      "karimnagar",
+      "nizamabad",
+      "revanth reddy",
+      "kcr",
+      "ktr",
+      "asaduddin owaisi",
+      "prof jayashankar",
+      "తెలంగాణ",
+      "హైదరాబాద్",
+      "చార్మినార్",
+      "ఒస్మానియా",
+      "వారంగల్",
+      "నిజామాబాద్",
+    ],
+
+    AndhraPradesh: [
+      "andhra pradesh",
+      "amaravati",
+      "vizag",
+      "visakhapatnam",
+      "vijayawada",
+      "tirupati",
+      "jagan reddy",
+      "chandrababu naidu",
+      "nara lokesh",
+      "pawan kalyan",
+      "ys rajasekhara reddy",
+      "nt rama rao",
+      "ఆంధ్రప్రదేశ్",
+      "అమరావతి",
+      "విశాఖపట్నం",
+      "విజయవాడ",
+      "తిరుపతి",
+      "జగన్",
+      "చంద్రబాబు",
+    ],
+
+    Crime: [
+      "crime",
+      "murder",
+      "theft",
+      "robbery",
+      "rape",
+      "scam",
+      "fraud",
+      "corruption",
+      "kidnap",
+      "police",
+      "court",
+      "cbi",
+      "charge sheet",
+      "trial",
+      "verdict",
+      "violence",
+      "riot",
+      "hatya",
+      "dharunam",
+      "ghoram",
+      "chi chi",
+      "atrocity",
+      "molestation",
+      "assault",
+      "నేరం",
+      "హత్య",
+      "దొంగతనం",
+      "దోపిడీ",
+      "బలాత్కారం",
+      "మోసం",
+      "అపహరణ",
+      "దారుణం",
+      "ఘోరం",
+    ],
+
+    Technology: [
+      "technology",
+      "tech",
+      "gadget",
+      "mobile",
+      "smartphone",
+      "iphone",
+      "android",
+      "ai",
+      "google",
+      "apple",
+      "microsoft",
+      "meta",
+      "facebook",
+      "twitter",
+      "x",
+      "whatsapp",
+      "instagram",
+      "software",
+      "hardware",
+      "app",
+      "laptop",
+      "pc",
+      "internet",
+      "wifi",
+      "5g",
+      "cloud",
+      "robot",
+      "startup",
+      "blockchain",
+      "crypto",
+      "సాంకేతికత",
+      "టెక్నాలజీ",
+      "గాడ్జెట్",
+      "మొబైల్",
+      "స్మార్ట్‌ఫోన్",
+      "కంప్యూటర్",
+      "అప్లికేషన్",
+      "ఇంటర్నెట్",
+      "క్లౌడ్",
+    ],
+
+    Education: [
+      "education",
+      "school",
+      "college",
+      "university",
+      "exam",
+      "results",
+      "marks",
+      "rank",
+      "jee",
+      "neet",
+      "ssc",
+      "cbse",
+      "icse",
+      "ts board",
+      "ap board",
+      "inter",
+      "degree",
+      "students",
+      "teachers",
+      "scholarship",
+      "online classes",
+      "విద్య",
+      "పాఠశాల",
+      "కళాశాల",
+      "విశ్వవిద్యాలయం",
+      "పరీక్ష",
+      "ఫలితాలు",
+      "మార్కులు",
+      "విద్యార్థులు",
+      "ఉపాధ్యాయులు",
+    ],
+
+    Jobs: [
+      "jobs",
+      "employment",
+      "unemployment",
+      "vacancy",
+      "government job",
+      "private job",
+      "recruitment",
+      "interview",
+      "hiring",
+      "placement",
+      "salary",
+      "internship",
+      "career",
+      "job fair",
+      "psc",
+      "upsc",
+      "tspsc",
+      "appsc",
+      "railway jobs",
+      "bank jobs",
+      "ఉద్యోగాలు",
+      "ఉద్యోగం",
+      "నియామకం",
+      "ప్రభుత్వ ఉద్యోగం",
+      "ప్రైవేట్ ఉద్యోగం",
+      "జీతం",
+      "ఇంటర్వ్యూ",
+      "కెరీర్",
+    ],
+
+    Viral: [
+      "viral",
+      "trending",
+      "trend",
+      "meme",
+      "funny",
+      "comedy",
+      "challenge",
+      "dance",
+      "song",
+      "video",
+      "youtube",
+      "instagram reel",
+      "tiktok",
+      "shorts",
+      "share",
+      "whatsapp forward",
+      "breaking",
+      "వైరల్",
+      "ట్రెండింగ్",
+      "వీడియో",
+      "మీమ్",
+      "ఫన్నీ",
+      "నవ్వు",
+      "డ్యాన్స్",
+      "సాంగ్",
+    ],
+
+    Lifestyle: [
+      "lifestyle",
+      "fashion",
+      "style",
+      "health",
+      "fitness",
+      "diet",
+      "yoga",
+      "gym",
+      "travel",
+      "food",
+      "recipe",
+      "restaurant",
+      "shopping",
+      "beauty",
+      "makeup",
+      "hair",
+      "skin",
+      "festival",
+      "wedding",
+      "party",
+      "relationship",
+      "love",
+      "marriage",
+      "parenting",
+      "జీవనశైలి",
+      "ఫ్యాషన్",
+      "ఆరోగ్యం",
+      "ఆహారం",
+      "ప్రయాణం",
+      "బ్యూటీ",
+      "వివాహం",
+      "పెళ్లి",
+      "ప్రేమ",
+      "అందం",
+      "ముఖసౌందర్యం",
+      "జుట్టు",
+    ],
+
+    Spiritual: [
+      "spiritual",
+      "religion",
+      "god",
+      "goddess",
+      "temple",
+      "church",
+      "mosque",
+      "puja",
+      "prayer",
+      "festival",
+      "diwali",
+      "holi",
+      "dasara",
+      "ugadi",
+      "vinayaka chavithi",
+      "ramzan",
+      "eid",
+      "bakrid",
+      "christmas",
+      "good friday",
+      "sankranti",
+      "pongal",
+      "navaratri",
+      "shivaratri",
+      "janmashtami",
+      "ayodhya",
+      "tirupati",
+      "tirumala",
+      "kanaka durga",
+      "srisailam",
+      "yadadri",
+      "meenakshi temple",
+      "allah",
+      "jesus",
+      "bible",
+      "quran",
+      "bhagavad gita",
+      "ఆధ్యాత్మిక",
+      "మతం",
+      "దేవుడు",
+      "దేవాలయం",
+      "చర్చ్",
+      "మసీదు",
+      "పూజ",
+      "ప్రార్థన",
+      "దీపావళి",
+      "హోళీ",
+      "దసరా",
+      "ఉగాది",
+      "వినాయక చవితి",
+      "రమజాన్",
+      "ఈద్",
+      "బక్రీద్",
+      "క్రిస్మస్",
+      "సంక్రాంతి",
+      "పొంగల్",
+      "నవరాత్రి",
+      "శివరాత్రి",
+      "జన్మాష్టమి",
+      "తిరుపతి",
+      "యాదాద్రి",
+      "దుర్గమ్మ గుడి",
+      "శ్రీశైలం",
+      "అయోధ్య",
+      "భగవద్గీత",
+      "ఖురాన్",
+      "బైబిల్",
+      "నవపంచమ రాజయోగం",
+    ],
   };
+
   const categories = new Set();
   let topCategory = "General";
   let maxCount = 0;
   const lowerText = text.toLowerCase();
+
   for (const [category, words] of Object.entries(keywords)) {
     const count = words.reduce(
-      (acc, word) => acc + (lowerText.includes(word) ? 1 : 0),
+      (acc, word) => acc + (lowerText.includes(word.toLowerCase()) ? 1 : 0),
       0
     );
+
     if (count > 0) {
       categories.add(category);
       if (count > maxCount) {
@@ -234,6 +799,7 @@ function classifyArticle(text) {
       }
     }
   }
+
   return { categories: Array.from(categories), topCategory };
 }
 
@@ -285,8 +851,37 @@ async function savePost(postData) {
   }
 }
 
-async function sendTargetedNotification({ title, category, data }) {
-  // ... (This function is unchanged, just ensure it's here)
+async function sendTargetedNotification({ title, body, category, data }) {
+  try {
+    const savedTokens = await ExpoPushToken.find({
+      subscribedCategories: category,
+    });
+    const pushTokens = savedTokens.map((t) => t.token);
+    if (pushTokens.length === 0) return;
+
+    let messages = [];
+    for (let pushToken of pushTokens) {
+      if (Expo.isExpoPushToken(pushToken)) {
+        messages.push({
+          to: pushToken,
+          sound: "default",
+          title: `[${category}] ${title}`,
+          body: body,
+          data: data || {},
+        });
+      }
+    }
+
+    const chunks = expo.chunkPushNotifications(messages);
+    for (let chunk of chunks) {
+      await expo.sendPushNotificationsAsync(chunk);
+    }
+  } catch (error) {
+    console.error(
+      `Error sending notification for category '${category}':`,
+      error
+    );
+  }
 }
 
 // =================================================================
@@ -349,20 +944,45 @@ cron.schedule("*/30 * * * *", fetchAllNewsSources);
 // ✅ START: NEW & CORRECTED ENDPOINTS FOR ADMIN DASHBOARD
 // ✅ ===============================================================
 
-// GET ALL POSTS WITH PAGINATION (FOR ADMIN DASHBOARD)
+// ✅ ADD THIS NEW ENDPOINT to your server.js to fetch all unique sources
+app.get("/api/sources", async (req, res) => {
+  try {
+    // Use .distinct() to get a unique array of all 'source' fields
+    const sources = await Post.distinct("source");
+    // Filter out any null or empty string sources before sending
+    res.json({ status: "success", sources: sources.filter((s) => s) });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: "Failed to fetch sources", details: err.message });
+  }
+});
+
+// ✅ REPLACE your existing /api/posts endpoint with this updated version
 app.get("/api/posts", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const posts = await Post.find()
+    // --- Build the filter object from query parameters ---
+    const filter = {};
+    if (req.query.source) {
+      filter.source = req.query.source;
+    }
+    if (req.query.category) {
+      // This query finds documents where the 'categories' array contains the specified category
+      filter.categories = req.query.category;
+    }
+
+    // Use the filter object in both the .find() and .countDocuments() calls
+    const posts = await Post.find(filter)
       .sort({ publishedAt: -1 })
       .skip(skip)
       .limit(limit)
       .lean();
 
-    const totalPosts = await Post.countDocuments();
+    const totalPosts = await Post.countDocuments(filter);
     const totalPages = Math.ceil(totalPosts / limit);
 
     res.json({
@@ -376,7 +996,6 @@ app.get("/api/posts", async (req, res) => {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
-
 // GET A SINGLE POST BY ID (Unchanged, but good to have here)
 app.get("/api/post/:id", async (req, res) => {
   try {
@@ -394,13 +1013,21 @@ app.get("/api/post/:id", async (req, res) => {
 });
 
 // CREATE A NEW POST (FOR ADMIN DASHBOARD)
+// ✅ ADD THIS ENDPOINT TO CREATE A NEW POST
 app.post("/api/post", async (req, res) => {
+  console.log(req.body);
   try {
-    // You can add validation here if needed
+    // Create a new Post document using the data from the request body
     const newPost = new Post(req.body);
+
+    // Save the new document to the database
     await newPost.save();
+
+    // Send a success response with the newly created post
     res.status(201).json({ status: "success", post: newPost });
   } catch (err) {
+    // If an error occurs (e.g., validation fails, database error)
+    console.error("❌ Error Creating Post:", err.message);
     res
       .status(500)
       .json({ error: "Failed to create post", details: err.message });
@@ -595,7 +1222,6 @@ app.get("/api/fetch-news-manual", async (req, res) => {
   res.json({ message: "Manual news fetch process initiated." });
 });
 
-
 app.get("/api/curated-feed", async (req, res) => {
   try {
     // --- Step 1: Log the incoming request query from the URL ---
@@ -647,7 +1273,7 @@ app.get("/api/curated-feed", async (req, res) => {
     const posts = await Post.find(query)
       .sort({ publishedAt: -1 })
       .limit(limit)
-      .populate('relatedStories', '_id title summary imageUrl') // Populate with essential fields
+      .populate("relatedStories", "_id title summary imageUrl") // Populate with essential fields
       .lean();
 
     // --- Step 5: Log the result ---
@@ -668,8 +1294,6 @@ app.get("/api/curated-feed", async (req, res) => {
   }
 });
 
-
-
 // Find this endpoint in your server.js
 app.get("/api/post/:id", async (req, res) => {
   try {
@@ -678,16 +1302,17 @@ app.get("/api/post/:id", async (req, res) => {
     }
     // ✅ CHANGE THIS LINE
     const post = await Post.findById(req.params.id)
-      .populate('relatedStories', '_id title') // Populate with _id and title
+      .populate("relatedStories", "_id title") // Populate with _id and title
       .lean();
-      
+
     if (!post) return res.status(404).json({ error: "Post not found." });
     res.json({ status: "success", post });
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch post", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Failed to fetch post", details: err.message });
   }
 });
-
 
 app.get("/api/post/:id", async (req, res) => {
   try {
