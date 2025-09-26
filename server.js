@@ -34,6 +34,7 @@ const RSS_SOURCES = [
   { url: "https://ntvtelugu.com/feed", name: "NTV Telugu" },
   { url: "https://tv9telugu.com/feed", name: "TV9 Telugu" },
   "https://telugu.hindustantimes.com/rss/sports",
+  "https://services.india.gov.in/feed/rss?cat_id=2&ln=en",
   // { url: "https://www.ntnews.com/rss", name: "Namasthe Telangana" },
   // {
   //   url: "https://www.thehindu.com/news/national/feeder/default.rss",
