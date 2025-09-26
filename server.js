@@ -24,7 +24,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MONGO_URI = process.env.MONGO_URI;
 const TWITTER_API_IO_KEY = process.env.TWITTER_API_KEY;
 const PORT = process.env.PORT || 4000;
-const SELF_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
+const SELF_URL = process.env.SERVER_URL || `https://twitterapi-node.onrender.com`;
 
 // --- Source Lists ---
 const AUTO_FETCH_USERS = process.env.AUTO_USERS
