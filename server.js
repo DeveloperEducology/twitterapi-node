@@ -1113,6 +1113,9 @@ app.get("/", (req, res) => res.send("API Server is running."));
 // =================================================================
 // ✅ NEW ENDPOINT: FETCH & STORE IMAGE URLS FROM 'posts' COLLECTION
 // =================================================================
+
+
+// ✅ NEW ENDPOINT: FETCH & STORE IMAGE URLS FROM 'posts' COLLECTION
 app.get('/api/migrate-image-urls', async (req, res) => {
   try {
     // 1. 'posts' కలెక్షన్ నుండి 'imageUrl' ఫీల్డ్‌ను మాత్రమే ఫెచ్ చేయండి
@@ -1139,12 +1142,13 @@ app.get('/api/migrate-image-urls', async (req, res) => {
     // 3. 'saved_image_data' కలెక్షన్‌లో డూప్లికేట్‌లను విస్మరించి బల్క్‌గా నిల్వ చేయండి
     let successfulInserts = 0;
     
-    // insertMany() ను ప్రయత్నించండి, డూప్లికేట్ ఎర్రర్‌లను పట్టించుకోవద్దు
+    // insertMany() ను ప్రయత్నించండి, డూప్లికేట్ ఎర్రర్‌లను పట్టించుకోవద్దు (ordered: false)
     const result = await ImageModel.insertMany(imagesToStore, { ordered: false })
       .catch(error => {
         // డూప్లికేట్ ఎర్రర్‌లను హ్యాండిల్ చేయండి (11000)
-        if (error.result?.nInserted > 0) {
-          successfulInserts = error.result.nInserted;
+        if (error.code === 11000) {
+          // ఇక్కడ error.result ను ఉపయోగించి ఇన్సర్ట్ అయిన వాటి సంఖ్యను తెలుసుకోవచ్చు
+          successfulInserts = error.result?.nInserted || 0;
           console.warn(`⚠️ Warning: ${imagesToStore.length - successfulInserts} duplicate image URLs skipped.`);
           return error.result; 
         }
@@ -1170,7 +1174,6 @@ app.get('/api/migrate-image-urls', async (req, res) => {
     });
   }
 });
-
 
 // =================================================================
 // ✅ NEW ENDPOINT: BROWSER-FRIENDLY SINGLE IMAGE URL STORE (FOR TEST)
