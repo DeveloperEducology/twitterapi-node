@@ -1100,6 +1100,54 @@ app.delete("/api/post/:id", async (req, res) => {
   }
 });
 
+
+// ఇమేజ్ URL ను తీసుకొని DBలో నిల్వ చేయడానికి POST ఎండ్‌పాయింట్
+app.post('/api/store-image-url', async (req, res) => {
+    try {
+        const { imageUrl, title } = req.body;
+
+        if (!imageUrl) {
+            return res.status(400).json({ success: false, message: 'imageUrl అవసరం.' });
+        }
+
+        // కొత్త డాక్యుమెంట్ సృష్టించి, ప్రత్యేక కలెక్షన్లో సేవ్ చేయండి
+        const newImage = new ImageModel({
+            imageUrl,
+            title: title || 'పేరు లేని ఇమేజ్',
+        });
+
+        const savedImage = await newImage.save();
+
+        res.status(201).json({ 
+            success: true, 
+            message: 'ఇమేజ్ URL విజయవంతంగా నిల్వ చేయబడింది', 
+            data: savedImage 
+        });
+    } catch (error) {
+        console.error('డేటాను నిల్వ చేయడంలో ఎర్రర్:', error);
+        res.status(500).json({ success: false, message: 'సర్వర్ ఎర్రర్' });
+    }
+});
+
+// బ్రౌజర్ టెస్టింగ్ కోసం రూట్ (POST అభ్యర్థనను అనుకరించే HTML ను ఇస్తుంది)
+app.get('/store-image-test', (req, res) => {
+    res.send(`
+        <h2>ఇమేజ్ URL ను స్టోర్ చేయండి (POST అభ్యర్థన అవసరం)</h2>
+        <form action="/api/store-image-url" method="POST">
+            <label for="imageUrl">ఇమేజ్ URL:</label><br>
+            <input type="text" id="imageUrl" name="imageUrl" value="https://example.com/image.jpg"><br><br>
+            <label for="title">శీర్షిక (ఐచ్ఛికం):</label><br>
+            <input type="text" id="title" name="title" value="నా పాత అప్‌లోడ్"><br><br>
+            <button type="submit">సేవ్ చేయండి</button>
+        </form>
+        <p><strong>గమనిక:</strong> ఈ ఫామ్ ఒక సరళమైన POST అభ్యర్థనను పంపుతుంది. నిజ జీవితంలో, మీరు సాధారణంగా బ్రౌజర్ నుండి JSON డేటాతో fetch() లేదా axios ఉపయోగించాలి.</p>
+    `);
+});
+
+
+
+
+
 // ✅ ===============================================================
 // ✅ END: NEW & CORRECTED ENDPOINTS FOR ADMIN DASHBOARD
 // ✅ ===============================================================
