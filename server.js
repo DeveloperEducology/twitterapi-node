@@ -7,41 +7,49 @@ import axios from "axios";
 import dotenv from "dotenv";
 import cron from "node-cron";
 import cors from "cors";
+import { getMessaging } from "firebase-admin/messaging"; // ✅ THIS LINE IS CRITICAL
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Expo } from "expo-server-sdk";
+import admin from "firebase-admin";
 import * as cheerio from "cheerio";
 import Parser from "rss-parser";
+import fs from "fs";
 
 dotenv.config();
 
 // --- Main Initializations ---
 const app = express();
-const expo = new Expo();
 const parser = new Parser();
 
 // --- API Keys & Config ---
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MONGO_URI = process.env.MONGO_URI;
-const TWITTER_API_IO_KEY = process.env.TWITTER_API_KEY;
 const PORT = process.env.PORT || 4000;
-const SELF_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
+const SELF_URL = process.env.SERVER_URL || `https://twitterapi-node.onrender.com`;
+const TWITTER_API_IO_KEY = process.env.TWITTER_API_KEY;
+
+// --- Firebase Admin SDK Setup ---
+// const serviceAccount = JSON.parse(fs.readFileSync("./serviceAccountKey.json"));
+// admin.initializeApp({
+//   credential: admin.credential.cert(serviceAccount),
+// });
+
+
+const serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+
 
 // --- Source Lists ---
-const AUTO_FETCH_USERS = process.env.AUTO_USERS
-  ? process.env.AUTO_USERS.split(",")
-  : [];
 const RSS_SOURCES = [
   { url: "https://ntvtelugu.com/feed", name: "NTV Telugu" },
   { url: "https://tv9telugu.com/feed", name: "TV9 Telugu" },
-  { url: "https://www.freejobalert.com/feed/", name: "Job Alerts" },
-   { url: "https://telugu.hindustantimes.com/rss/sports", name: "Hindustan Sports" },
-  
-  // "https://services.india.gov.in/feed/rss?cat_id=2&ln=en",
-  // { url: "https://www.ntnews.com/rss", name: "Namasthe Telangana" },
-  // {
-  //   url: "https://www.thehindu.com/news/national/feeder/default.rss",
-  //   name: "The Hindu",
-  // },
+  {
+    url: "https://telugu.hindustantimes.com/rss/sports",
+    name: "Hindustan Times Telugu",
+  },
   { url: "https://feeds.feedburner.com/ndtvnews-latest", name: "NDTV News" },
 ];
 
@@ -53,17 +61,11 @@ const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 // 2. MONGODB SETUP & MODELS
 // =================================================================
 
-// Define a simple sub-schema for media to be used within the Post schema
 const mediaSchema = new mongoose.Schema(
   {
     type: { type: String, enum: ["photo", "video", "animated_gif"] },
-    url: String, // For photos
-    variants: [
-      {
-        bitrate: Number,
-        url: String,
-      },
-    ], // For videos
+    url: String,
+    variants: [{ bitrate: Number, url: String }],
     width: Number,
     height: Number,
   },
@@ -72,92 +74,47 @@ const mediaSchema = new mongoose.Schema(
 
 const postSchema = new mongoose.Schema(
   {
-    // Core Content
     title: { type: String, required: true, index: "text" },
+    pushTitle: { type: String, required: false, index: "text" },
     summary: { type: String, index: "text" },
     text: String,
-    url: { type: String, unique: true, sparse: true }, // sparse allows multiple docs to have null
+    url: { type: String, unique: true, sparse: true },
     imageUrl: String,
-    media: [mediaSchema],
-    videoUrl: String,
-
-    // ✅ 1. ADD THIS FIELD TO STORE RELATED STORIES
-    // This creates an array of references to other documents within the 'Post' collection.
     relatedStories: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
-
-    // Metadata
     source: String,
     sourceType: {
       type: String,
-      enum: ["rss", "tweet_api", "manual", "youtube"],
+      enum: ["rss", "manual", "tweet_api"],
       required: true,
-      default: "manual"
+      default: "manual",
     },
     publishedAt: { type: Date, default: Date.now, index: true },
     lang: String,
-    isBreaking: { type: Boolean, default: false }, // ✅ ADD THIS LINE
-
-    // Classification & Flags
     categories: [{ type: String, index: true }],
     topCategory: { type: String, index: true },
     isPublished: { type: Boolean, default: true, index: true },
+    media: [mediaSchema],
+    videoUrl: String,
+    isBreaking: { type: Boolean, default: false },
     type: { type: String, default: "normal_post" },
-    scheduledFor: { type: Date, default: null }, // ✅ ADD THIS LINE
-    // Source-Specific Data
+    scheduledFor: { type: Date, default: null },
     tweetId: { type: String, unique: true, sparse: true },
     twitterUrl: String,
   },
   { timestamps: true, collection: "posts" }
 );
-
-// To improve performance of related stories lookup
 postSchema.index({ categories: 1, publishedAt: -1 });
-
 const Post = mongoose.model("Post", postSchema);
 
-
-// =================================================================
-// ✅ NEW SCHEMA: IMAGE_DATA
-// =================================================================
-const ImageSchema = new mongoose.Schema({
-  // ఇమేజ్ యొక్క URL (బయటి స్టోరేజీ నుండి లేదా పోస్ట్ నుండి)
-  imageUrl: {
-    type: String,
-    required: true,
-    unique: true, // ఇమేజ్ URL డూప్లికేట్‌లను నిరోధించడానికి
-  },
-  // ఇమేజ్‌కి సంబంధించిన శీర్షిక
-  title: {
-    type: String,
-    required: false,
-  },
-  // ఏ కలెక్షన్ నుండి వచ్చిందో తెలుసుకోవడానికి (ఉదా: 'posts', 'manual')
-  sourceCollection: {
-    type: String,
-    default: 'manual_upload'
-  },
-  // ఎప్పుడు స్టోర్ చేయబడింది
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  }
-}, { collection: 'saved_image_data' }); // ఇమేజ్ డేటా కోసం ప్రత్యేక కలెక్షన్
-
-const ImageModel = mongoose.model('Image', ImageSchema);
-// =================================================================
-
-
-// --- Push Notification Token Schema ---
-const expoPushTokenSchema = new mongoose.Schema(
+const fcmTokenSchema = new mongoose.Schema(
   {
     token: { type: String, required: true, unique: true },
     subscribedCategories: [{ type: String }],
   },
   { timestamps: true }
 );
-const ExpoPushToken = mongoose.model("ExpoPushToken", expoPushTokenSchema);
+const FcmToken = mongoose.model("FcmToken", fcmTokenSchema);
 
-// --- DB Connection ---
 mongoose
   .connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
@@ -176,8 +133,11 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) callback(null, true);
-      else callback(new Error("Not allowed by CORS"));
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
     },
   })
 );
@@ -191,14 +151,15 @@ async function processWithGemini(text) {
   try {
     let prompt;
     if (containsTelugu(text)) {
-      prompt = `You are a professional Telugu journalist. Summarize the following Telugu news text into a concise news-style title and summary in Telugu. use regular using words in noramal news papers. Return strictly JSON with keys: title, summary.  Do not add anything else.\n\n${text}`;
+      prompt = `You are a professional Telugu journalist. Summarize the following Telugu news text into a concise news-style title and summary in Telugu. use regular using words in noramal news papers. Return strictly JSON with keys: title, summary. Do not add anything else.\n\n${text}`;
     } else {
       prompt = `You are a professional Telugu journalist. Translate the following English news text into Telugu and create a short Telugu news title and summary. Return strictly JSON with keys: title, summary. Do not add anything else.\n\n${text}`;
     }
     const result = await geminiModel.generateContent(prompt);
     const response = await result.response;
-    let content = response.text().trim();
-    content = content
+    let content = response
+      .text()
+      .trim()
       .replace(/```json/g, "")
       .replace(/```/g, "")
       .trim();
@@ -229,8 +190,9 @@ function containsTelugu(text) {
 
 function cleanHtmlContent(html) {
   if (!html) return "";
-  const $ = cheerio.load(html);
-  return $.text()
+  return cheerio
+    .load(html)
+    .text()
     .replace(/(\r\n|\n|\r)/gm, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -240,56 +202,10 @@ function extractImageFromItem(item) {
   if (item.enclosure?.url && item.enclosure.type?.startsWith("image"))
     return item.enclosure.url;
   const content = item["content:encoded"] || item.content || "";
-  const $ = cheerio.load(content);
-  return $("img").first().attr("src") || null;
+  return cheerio.load(content)("img").first().attr("src") || null;
 }
 
-app.get("/api/classify-all", async (req, res) => {
-  try {
-    // Fetch only unclassified articles
-    const articles = await Post.find({
-      $or: [{ categories: { $exists: false } }, { categories: { $size: 0 } }],
-    });
-
-    let updated = 0;
-
-    for (let article of articles) {
-      try {
-        const { categories, topCategory } = classifyArticle(
-          `${article.title || ""} ${article.summary || ""} ${
-            article.text || ""
-          }`
-        );
-
-        if (categories.length > 0) {
-          article.categories = categories;
-          article.topCategory = topCategory;
-          await article.save();
-          updated++;
-          console.log(
-            `✅ Classified: "${article.title}" → [${categories.join(
-              ", "
-            )}] (Top: ${topCategory})`
-          );
-        } else {
-          console.log(`⚠️ No match for: "${article.title}"`);
-        }
-      } catch (err) {
-        console.error(`❌ Error classifying: "${article.title}"`, err);
-      }
-    }
-
-    res.json({
-      message: "Classification complete",
-      totalChecked: articles.length,
-      updated,
-    });
-  } catch (err) {
-    console.error("🔥 Error in classify-all:", err);
-    res.status(500).json({ error: "Something went wrong" });
-  }
-});
-// Classification function
+// ✅ --- FIX #1: ALWAYS RETURN AT LEAST ONE CATEGORY ---
 function classifyArticle(text) {
   const keywords = {
     Sports: [
@@ -305,16 +221,10 @@ function classifyArticle(text) {
       "t20",
       "odi",
       "world cup",
-      "stadium",
       "match",
       "tournament",
       "league",
       "goal",
-      "bat",
-      "ball",
-      "wicket",
-      "umpire",
-      "captain",
       "క్రికెట్",
       "ఫుట్‌బాల్",
       "టెన్నిస్",
@@ -324,27 +234,17 @@ function classifyArticle(text) {
       "ఐపీఎల్",
       "వరల్డ్ కప్",
       "మ్యాచ్",
-      "ఆట",
-      "జట్టు",
-      "ప్లేయర్",
-      "ప్రేక్షకులు",
     ],
-
     Entertainment: [
       "movie",
       "cinema",
       "film",
       "actor",
       "actress",
-      "hero",
-      "heroine",
-      "star",
       "celebrity",
       "director",
-      "producer",
       "music",
       "song",
-      "album",
       "trailer",
       "teaser",
       "box office",
@@ -353,11 +253,6 @@ function classifyArticle(text) {
       "Hollywood",
       "web series",
       "OTT",
-      "award",
-      "shooting",
-      "release",
-      "blockbuster",
-      "flop",
       "సినిమా",
       "చిత్రం",
       "నటుడు",
@@ -368,12 +263,7 @@ function classifyArticle(text) {
       "సంగీతం",
       "పాట",
       "ట్రైలర్",
-      "హిట్",
-      "ఫ్లాప్",
-      "టాలీవుడ్",
-      "బాలీవుడ్",
     ],
-
     Politics: [
       "election",
       "vote",
@@ -385,155 +275,65 @@ function classifyArticle(text) {
       "assembly",
       "narendra modi",
       "modi",
-      "prime minister modi",
-      "నరేంద్ర మోదీ",
-      "amit shah",
-      "rahul gandhi",
-      "sonia gandhi",
-      "priyanka gandhi",
-      "arvind kejriwal",
-      "mamata banerjee",
-      "nitish kumar",
-      "droupadi murmu",
-      "president murmu",
-      "ద్రౌపది ముర్ము",
-      "justice chandrachud",
-      "chief justice",
       "revanth reddy",
       "kcr",
       "ktr",
-      "asaduddin owaisi",
       "jagan reddy",
       "chandrababu naidu",
       "pawan kalyan",
-      "nara lokesh",
-      "ys rajasekhara reddy",
-      "nt rama rao",
-      "atal bihari vajpayee",
-      "indira gandhi",
-      "rajiv gandhi",
-      "manmohan singh",
-      "nehru",
-      "abdul kalam",
       "ఎన్నికలు",
       "ఓటు",
       "మంత్రి",
       "ప్రభుత్వం",
       "పార్టీ",
-      "ఎమ్మెల్యే",
-      "ఎంపీ",
     ],
-
     National: [
       "india",
       "bharat",
       "delhi",
       "mumbai",
-      "chennai",
-      "kolkata",
-      "bangalore",
       "supreme court",
-      "high court",
-      "constitution",
       "army",
       "navy",
-      "air force",
-      "economy",
-      "inflation",
-      "reserve bank",
       "isro",
-      "science",
-      "technology",
-      "farmers",
-      "youth",
-      "culture",
-      "festival",
-      "strike",
-      "protest",
       "భారతదేశం",
       "జాతీయ",
-      "స్వాతంత్ర్యం",
-      "గణతంత్ర",
-      "సైన్యం",
-      "సుప్రీం కోర్ట్",
     ],
-
     International: [
       "world",
       "global",
-      "international",
-      "foreign",
       "usa",
       "america",
       "china",
       "pakistan",
       "russia",
-      "uk",
-      "france",
-      "germany",
-      "italy",
-      "japan",
-      "korea",
-      "australia",
-      "canada",
       "un",
-      "united nations",
       "war",
-      "peace",
-      "summit",
-      "diplomacy",
-      "terrorism",
       "ప్రపంచం",
       "అంతర్జాతీయ",
-      "అమెరికా",
-      "చైనా",
-      "పాకిస్తాన్",
-      "రష్యా",
-      "జర్మనీ",
-      "జపాన్",
     ],
-
     Telangana: [
       "telangana",
       "hyderabad",
       "warangal",
-      "karimnagar",
-      "nizamabad",
       "revanth reddy",
       "kcr",
       "ktr",
-      "asaduddin owaisi",
-      "prof jayashankar",
       "తెలంగాణ",
       "హైదరాబాద్",
-      "చార్మినార్",
-      "ఒస్మానియా",
-      "వారంగల్",
-      "నిజామాబాద్",
     ],
-
     AndhraPradesh: [
       "andhra pradesh",
       "amaravati",
       "vizag",
-      "visakhapatnam",
       "vijayawada",
-      "tirupati",
       "jagan reddy",
       "chandrababu naidu",
-      "nara lokesh",
       "pawan kalyan",
-      "ys rajasekhara reddy",
-      "nt rama rao",
       "ఆంధ్రప్రదేశ్",
       "అమరావతి",
       "విశాఖపట్నం",
-      "విజయవాడ",
-      "తిరుపతి",
-      "జగన్",
-      "చంద్రబాబు",
     ],
-
     Crime: [
       "crime",
       "murder",
@@ -541,35 +341,15 @@ function classifyArticle(text) {
       "robbery",
       "rape",
       "scam",
-      "fraud",
-      "corruption",
-      "kidnap",
       "police",
       "court",
       "cbi",
-      "charge sheet",
-      "trial",
-      "verdict",
       "violence",
-      "riot",
-      "hatya",
-      "dharunam",
-      "ghoram",
-      "chi chi",
-      "atrocity",
-      "molestation",
-      "assault",
       "నేరం",
       "హత్య",
       "దొంగతనం",
-      "దోపిడీ",
-      "బలాత్కారం",
       "మోసం",
-      "అపహరణ",
-      "దారుణం",
-      "ఘోరం",
     ],
-
     Technology: [
       "technology",
       "tech",
@@ -588,244 +368,57 @@ function classifyArticle(text) {
       "x",
       "whatsapp",
       "instagram",
-      "software",
-      "hardware",
       "app",
-      "laptop",
-      "pc",
-      "internet",
-      "wifi",
-      "5g",
-      "cloud",
-      "robot",
-      "startup",
-      "blockchain",
-      "crypto",
       "సాంకేతికత",
       "టెక్నాలజీ",
-      "గాడ్జెట్",
       "మొబైల్",
       "స్మార్ట్‌ఫోన్",
-      "కంప్యూటర్",
-      "అప్లికేషన్",
-      "ఇంటర్నెట్",
-      "క్లౌడ్",
     ],
-
-    Education: [
-      "education",
-      "school",
-      "college",
-      "university",
-      "exam",
-      "results",
-      "marks",
-      "rank",
-      "jee",
-      "neet",
-      "ssc",
-      "cbse",
-      "icse",
-      "ts board",
-      "ap board",
-      "inter",
-      "degree",
-      "students",
-      "teachers",
-      "scholarship",
-      "online classes",
-      "విద్య",
-      "పాఠశాల",
-      "కళాశాల",
-      "విశ్వవిద్యాలయం",
-      "పరీక్ష",
-      "ఫలితాలు",
-      "మార్కులు",
-      "విద్యార్థులు",
-      "ఉపాధ్యాయులు",
-    ],
-
-    Jobs: [
-      "jobs",
-      "employment",
-      "unemployment",
-      "vacancy",
-      "government job",
-      "private job",
-      "recruitment",
-      "interview",
-      "hiring",
-      "placement",
-      "salary",
-      "internship",
-      "career",
-      "job fair",
-      "psc",
-      "upsc",
-      "tspsc",
-      "appsc",
-      "railway jobs",
-      "bank jobs",
-      "ఉద్యోగాలు",
-      "ఉద్యోగం",
-      "నియామకం",
-      "ప్రభుత్వ ఉద్యోగం",
-      "ప్రైవేట్ ఉద్యోగం",
-      "జీతం",
-      "ఇంటర్వ్యూ",
-      "కెరీర్",
-    ],
-
-    Viral: [
-      "viral",
-      "trending",
-      "trend",
-      "meme",
-      "funny",
-      "comedy",
-      "challenge",
-      "dance",
-      "song",
-      "video",
-      "youtube",
-      "instagram reel",
-      "tiktok",
-      "shorts",
-      "share",
-      "whatsapp forward",
-      "breaking",
-      "వైరల్",
-      "ట్రెండింగ్",
-      "వీడియో",
-      "మీమ్",
-      "ఫన్నీ",
-      "నవ్వు",
-      "డ్యాన్స్",
-      "సాంగ్",
-    ],
-
     Lifestyle: [
       "lifestyle",
       "fashion",
-      "style",
       "health",
       "fitness",
       "diet",
       "yoga",
-      "gym",
       "travel",
       "food",
       "recipe",
-      "restaurant",
-      "shopping",
       "beauty",
-      "makeup",
-      "hair",
-      "skin",
-      "festival",
-      "wedding",
-      "party",
-      "relationship",
-      "love",
-      "marriage",
-      "parenting",
       "జీవనశైలి",
       "ఫ్యాషన్",
       "ఆరోగ్యం",
       "ఆహారం",
-      "ప్రయాణం",
-      "బ్యూటీ",
-      "వివాహం",
-      "పెళ్లి",
-      "ప్రేమ",
-      "అందం",
-      "ముఖసౌందర్యం",
-      "జుట్టు",
     ],
-
     Spiritual: [
       "spiritual",
       "religion",
       "god",
-      "goddess",
       "temple",
       "church",
       "mosque",
       "puja",
-      "prayer",
       "festival",
       "diwali",
-      "holi",
-      "dasara",
-      "ugadi",
-      "vinayaka chavithi",
       "ramzan",
-      "eid",
-      "bakrid",
       "christmas",
-      "good friday",
-      "sankranti",
-      "pongal",
-      "navaratri",
-      "shivaratri",
-      "janmashtami",
       "ayodhya",
       "tirupati",
-      "tirumala",
-      "kanaka durga",
-      "srisailam",
       "yadadri",
-      "meenakshi temple",
-      "allah",
-      "jesus",
-      "bible",
-      "quran",
-      "bhagavad gita",
       "ఆధ్యాత్మిక",
-      "మతం",
       "దేవుడు",
       "దేవాలయం",
-      "చర్చ్",
-      "మసీదు",
-      "పూజ",
-      "ప్రార్థన",
-      "దీపావళి",
-      "హోళీ",
-      "దసరా",
-      "ఉగాది",
-      "వినాయక చవితి",
-      "రమజాన్",
-      "ఈద్",
-      "బక్రీద్",
-      "క్రిస్మస్",
-      "సంక్రాంతి",
-      "పొంగల్",
-      "నవరాత్రి",
-      "శివరాత్రి",
-      "జన్మాష్టమి",
-      "తిరుపతి",
-      "యాదాద్రి",
-      "దుర్గమ్మ గుడి",
-      "శ్రీశైలం",
-      "అయోధ్య",
-      "భగవద్గీత",
-      "ఖురాన్",
-      "బైబిల్",
-      "నవపంచమ రాజయోగం",
     ],
   };
-
   const categories = new Set();
   let topCategory = "General";
   let maxCount = 0;
   const lowerText = text.toLowerCase();
-
   for (const [category, words] of Object.entries(keywords)) {
     const count = words.reduce(
       (acc, word) => acc + (lowerText.includes(word.toLowerCase()) ? 1 : 0),
       0
     );
-
     if (count > 0) {
       categories.add(category);
       if (count > maxCount) {
@@ -835,20 +428,87 @@ function classifyArticle(text) {
     }
   }
 
-  return { categories: Array.from(categories), topCategory };
+  const finalCategories = Array.from(categories);
+  // If no specific keywords matched, add "General"
+  if (finalCategories.length === 0) {
+    finalCategories.push("General");
+  }
+
+  return {
+    categories: finalCategories,
+    topCategory: categories.size > 0 ? topCategory : "General",
+  };
+}
+
+// ✅ --- FIX #2: SEND A MORE RELIABLE NOTIFICATION PAYLOAD ---
+async function sendNotificationForPost(post) {
+  if (!post || !post.categories || post.categories.length === 0) return;
+
+  const categories = post.categories;
+  const tokens = await FcmToken.find({
+    subscribedCategories: { $in: categories },
+  }).distinct("token");
+
+  if (tokens.length === 0) return;
+
+  const message = {
+    // This `notification` block is handled automatically by the device OS
+    // when the app is in the background or terminated.
+    notification: {
+      title: post.pushTitle || post.title,
+      body: post.summary,
+    },
+    // This `data` block is for your app to handle when it's in the foreground
+    // or to process when the user taps the notification.
+    data: {
+      postId: post._id.toString(), // Send ID for navigation
+      imageUrl: post.imageUrl || "",
+      source: post.source || "",
+    },
+    tokens: tokens,
+  };
+
+  try {
+    const response = await admin.messaging().sendMulticast(message);
+    console.log(
+      `✅ Notification sent to ${
+        response.successCount
+      } devices for post: "${post.title.slice(0, 30)}..."`
+    );
+
+    if (response.failureCount > 0) {
+      const failedTokens = [];
+      response.responses.forEach((resp, idx) => {
+        if (
+          !resp.success &&
+          [
+            "messaging/registration-token-not-registered",
+            "messaging/invalid-registration-token",
+          ].includes(resp.error.code)
+        ) {
+          failedTokens.push(tokens[idx]);
+        }
+      });
+      if (failedTokens.length > 0) {
+        await FcmToken.deleteMany({ token: { $in: failedTokens } });
+        console.log(`🗑️ Removed ${failedTokens.length} invalid tokens.`);
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error sending multicast notification:", error);
+  }
 }
 
 async function savePost(postData) {
   const { categories, topCategory } = classifyArticle(
-    postData.title + " " + postData.summary
+    postData.title + " " + (postData.summary || "")
   );
   postData.categories = categories;
   postData.topCategory = topCategory;
   postData.imageUrl = postData.imageUrl || postData.media?.[0]?.url || null;
 
-  const identifier = postData.url
-    ? { url: postData.url }
-    : { tweetId: postData.tweetId };
+  // For RSS posts, URL is the primary identifier
+  const identifier = { url: postData.url };
 
   try {
     const result = await Post.updateOne(
@@ -856,6 +516,8 @@ async function savePost(postData) {
       { $setOnInsert: postData },
       { upsert: true }
     );
+
+    // If a new post was inserted (upserted)
     if (result.upsertedCount > 0) {
       const newPost = await Post.findOne(identifier).lean();
       console.log(
@@ -863,73 +525,64 @@ async function savePost(postData) {
           newPost.source
         }`
       );
-      // Trigger notifications for the newly saved post
-      for (const category of newPost.categories) {
-        sendTargetedNotification({
-          title: newPost.title,
-          category,
-          data: { postId: newPost._id.toString() },
-        });
-      }
+      await sendNotificationForPost(newPost); // Trigger notification
       return true;
     }
-    return false;
+    return false; // No new post was saved
   } catch (error) {
-    if (error.code === 11000) {
-      console.warn(
-        `⚠️ Post already exists, skipping: ${postData.url || postData.tweetId}`
-      );
-    } else {
+    // Ignore duplicate key errors silently, log others
+    if (error.code !== 11000) {
       console.error("Error saving post:", error.message);
     }
     return false;
   }
 }
 
-async function sendTargetedNotification({ title, body, category, data }) {
-  try {
-    const savedTokens = await ExpoPushToken.find({
-      subscribedCategories: category,
-    });
-    const pushTokens = savedTokens.map((t) => t.token);
-    if (pushTokens.length === 0) return;
-
-    let messages = [];
-    for (let pushToken of pushTokens) {
-      if (Expo.isExpoPushToken(pushToken)) {
-        messages.push({
-          to: pushToken,
-          sound: "default",
-          title: `[${category}] ${title}`,
-          body: body,
-          data: data || {},
-        });
-      }
-    }
-
-    const chunks = expo.chunkPushNotifications(messages);
-    for (let chunk of chunks) {
-      await expo.sendPushNotificationsAsync(chunk);
-    }
-  } catch (error) {
-    console.error(
-      `Error sending notification for category '${category}':`,
-      error
-    );
-  }
-}
-
 // =================================================================
 // 5. CRON JOBS
 // =================================================================
-
 cron.schedule("*/5 * * * *", async () => {
   try {
     await axios.get(SELF_URL);
-    console.log(`Pinged self at ${new Date().toLocaleTimeString()}`);
   } catch (err) {
-    console.error("Self-ping failed:", err.message);
+    /* Silently fail on self-ping */
   }
+});
+
+cron.schedule("*/30 * * * *", async () => {
+  console.log("⏰ Cron: Starting RSS feed processing...");
+  let newPostsCount = 0;
+  for (const source of RSS_SOURCES) {
+    const sourceUrl = typeof source === "object" ? source.url : source;
+    const sourceName = typeof source === "object" ? source.name : sourceUrl;
+    try {
+      const feed = await parser.parseURL(sourceUrl);
+      for (const item of feed.items) {
+        if (!item.link || !item.title) continue;
+        const saved = await savePost({
+          title: item.title,
+          summary: cleanHtmlContent(
+            item.contentSnippet || item.description || ""
+          ),
+          text: cleanHtmlContent(item.content || ""),
+          url: normalizeUrl(item.link),
+          source: sourceName,
+          sourceType: "rss",
+          publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+          imageUrl: extractImageFromItem(item),
+          lang: containsTelugu(item.title) ? "te" : "en",
+        });
+        if (saved) newPostsCount++;
+      }
+    } catch (error) {
+      console.error(
+        `❌ Failed to fetch RSS feed from ${sourceName}: ${error.message}`
+      );
+    }
+  }
+  console.log(
+    `✅ Cron: RSS fetching complete. Added ${newPostsCount} new posts.`
+  );
 });
 
 async function fetchAllNewsSources() {
@@ -973,18 +626,227 @@ async function fetchAllNewsSources() {
     `✅ Cron: RSS fetching complete. Added ${newPostsCount} new posts.`
   );
 }
-cron.schedule("*/30 * * * *", fetchAllNewsSources);
 
-// ✅ ===============================================================
-// ✅ START: NEW & CORRECTED ENDPOINTS FOR ADMIN DASHBOARD
-// ✅ ===============================================================
+// ✅ --- NEW ---
+// Function to send a notification to a SINGLE FCM token.
+async function sendSingleNotification(token, payload) {
+  const { title, body, data } = payload;
 
-// ✅ ADD THIS NEW ENDPOINT to your server.js to fetch all unique sources
+  const message = {
+    notification: { title, body },
+    data: data || {},
+    token: token,
+  };
+
+  try {
+    const response = await getMessaging().send(message);
+    console.log(
+      `✅ Successfully sent message to token ${token.slice(0, 20)}...:`,
+      response
+    );
+    return { success: true, response };
+  } catch (error) {
+    console.error(
+      `❌ Error sending message to token ${token.slice(0, 20)}...:`,
+      error.message
+    );
+    // If the token is invalid, remove it from the database
+    if (
+      error.code === "messaging/registration-token-not-registered" ||
+      error.code === "messaging/invalid-registration-token"
+    ) {
+      await FcmToken.deleteOne({ token: token });
+      console.log(`🗑️ Removed invalid token: ${token.slice(0, 20)}...`);
+    }
+    return { success: false, error };
+  }
+}
+
+// This function now uses sendEach(), which is a robust alternative to sendMulticast().
+async function sendGlobalNotification(payload) {
+  const { title, body, data } = payload;
+  const tokens = await FcmToken.find({}).distinct("token");
+
+  if (tokens.length === 0) {
+    console.log("No FCM tokens registered. Skipping global notification.");
+    return { successCount: 0, failureCount: 0, totalTokens: 0 };
+  }
+
+  // For sendEach(), we need to create an array of individual messages.
+  const messages = tokens.map((token) => ({
+    notification: { title, body },
+    data: {
+      title,
+      body,
+      ...data,
+    },
+    token: token, // Each message object must have a 'token' property
+  }));
+
+  try {
+    // Use sendEach() to send all messages in a batch.
+    const response = await getMessaging().sendEach(messages);
+    console.log(
+      `✅ Global notification batch processed. Success: ${response.successCount}, Failure: ${response.failureCount}`
+    );
+
+    if (response.failureCount > 0) {
+      const failedTokens = [];
+      response.responses.forEach((resp, idx) => {
+        if (!resp.success) {
+          // Find the original token using the index
+          const failedToken = tokens[idx];
+          failedTokens.push(failedToken);
+          // Check the error to see if the token is invalid
+          const errorCode = resp.error?.code;
+          if (
+            errorCode === "messaging/registration-token-not-registered" ||
+            errorCode === "messaging/invalid-registration-token"
+          ) {
+            console.log(
+              `Marking invalid token for removal: ${failedToken.slice(
+                0,
+                20
+              )}...`
+            );
+          }
+        }
+      });
+
+      if (failedTokens.length > 0) {
+        await FcmToken.deleteMany({ token: { $in: failedTokens } });
+        console.log(`🗑️ Removed ${failedTokens.length} invalid tokens.`);
+      }
+    }
+    return { ...response, totalTokens: tokens.length };
+  } catch (error) {
+    console.error("❌ Error sending global notification batch:", error);
+    throw error;
+  }
+}
+
+// --- TESTING ENDPOINTS ---
+
+// Test endpoint to trigger a notification to a single device token.
+app.post("/api/admin/test-notify-single", async (req, res) => {
+  const { token } = req.body;
+  if (!token) {
+    return res.status(400).json({ error: "FCM token is required." });
+  }
+  try {
+    const result = await sendSingleNotification(token, {
+      title: "Single Device Test 📲",
+      body: "This is a test notification sent to only your device.",
+      data: {
+        type: "admin_single_test",
+        timestamp: new Date().toISOString(),
+        url: "/post/6515e02278a8a4457e651581", // Sample URL for navigation
+        imageUrl: "https://placehold.co/600x400/orange/white?text=Test",
+      },
+    });
+    if (result.success) {
+      res.json({
+        message: "Test notification sent successfully.",
+        details: result.response,
+      });
+    } else {
+      res.status(500).json({
+        message: "Failed to send test notification.",
+        details: result.error.message,
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ error: "An unexpected server error occurred." });
+  }
+});
+
+// ✅ --- NEW: GLOBAL NEWS TESTING ENDPOINT ---
+// Sends a customizable test news notification to ALL users.
+app.post("/api/admin/send-test-news", async (req, res) => {
+  try {
+    // Use values from request body, or fall back to default test data
+    const title = req.body.title || "GLOBAL TEST: Breaking News 📰";
+    const body =
+      req.body.body ||
+      "This is a sample news summary sent to all users for testing purposes.";
+
+    // Construct the data payload, including any extra fields like imageUrl or url
+    const data = {
+      type: "admin_global_test",
+      timestamp: new Date().toISOString(),
+      // Defaults
+      url: "/post/6515e02278a8a4457e651581",
+      imageUrl: "https://placehold.co/600x400/blue/white?text=Global+Test",
+      // Overwrite with any data from the request body
+      ...req.body,
+    };
+
+    const result = await sendGlobalNotification({ title, body, data });
+
+    res.json({
+      message: "Global test news notification sent.",
+      totalTokensInDb: result.totalTokens,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error:
+        "An unexpected server error occurred while sending global notification.",
+    });
+  }
+});
+
+// ✅ --- NEW: GLOBAL NOTIFICATION FOR A SPECIFIC POST ---
+// Takes a post ID and sends a notification about it to ALL users.
+app.post("/api/admin/notify/post/:postId", async (req, res) => {
+  try {
+    const { postId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({ error: "Invalid Post ID format." });
+    }
+
+    const post = await Post.findById(postId).lean();
+    if (!post) {
+      return res.status(404).json({ error: "Post not found." });
+    }
+
+    const title = post.pushTitle || post.title;
+    const body = "";
+    const data = {
+      url: `/post/${post._id}`,
+      postId: post._id.toString(),
+      imageUrl: post.imageUrl || "",
+    };
+
+    const result = await sendGlobalNotification({ title, body, data });
+
+    res.json({
+      message: `Global notification for post "${title}" has been sent.`,
+      totalTokensInDb: result.totalTokens,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+    });
+  } catch (error) {
+    console.error("❌ Error sending global post notification:", error);
+    res.status(500).json({ error: "An unexpected server error occurred." });
+  }
+});
+
+// =================================================================
+// 6. API ENDPOINTS
+// =================================================================
+app.get("/", (req, res) => res.send("API Server is running."));
+
+app.get("/api/fetch-news-manual", async (req, res) => {
+  await fetchAllNewsSources();
+  res.json({ message: "Manual news fetch process initiated." });
+});
+
 app.get("/api/sources", async (req, res) => {
   try {
-    // Use .distinct() to get a unique array of all 'source' fields
     const sources = await Post.distinct("source");
-    // Filter out any null or empty string sources before sending
     res.json({ status: "success", sources: sources.filter((s) => s) });
   } catch (err) {
     res
@@ -993,51 +855,65 @@ app.get("/api/sources", async (req, res) => {
   }
 });
 
-// ✅ REPLACE your existing /api/posts endpoint with this updated version
 app.get("/api/posts", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
-
-    // --- Build the filter object from query parameters ---
     const filter = {};
-    if (req.query.source) {
-      filter.source = req.query.source;
-    }
-    if (req.query.category) {
-      // This query finds documents where the 'categories' array contains the specified category
-      filter.categories = req.query.category;
-    }
-
-    // Use the filter object in both the .find() and .countDocuments() calls
+    if (req.query.source) filter.source = req.query.source;
+    if (req.query.category) filter.categories = req.query.category;
     const posts = await Post.find(filter)
       .sort({ publishedAt: -1 })
       .skip(skip)
       .limit(limit)
       .lean();
-
     const totalPosts = await Post.countDocuments(filter);
     const totalPages = Math.ceil(totalPosts / limit);
-
-    res.json({
-      status: "success",
-      posts,
-      page,
-      totalPages,
-      totalPosts,
-    });
+    res.json({ status: "success", posts, page, totalPages, totalPosts });
   } catch (err) {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
-// GET A SINGLE POST BY ID (Unchanged, but good to have here)
+
+app.get("/api/curated-feed", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const categories = req.query.categories
+      ? req.query.categories.split(",")
+      : [];
+    const cursor = req.query.cursor ? new Date(req.query.cursor) : new Date();
+    if (isNaN(cursor.getTime())) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Invalid cursor format." });
+    }
+    const query = { isPublished: true, publishedAt: { $lt: cursor } };
+    if (categories.length > 0) {
+      query.categories = { $in: categories };
+    }
+    const posts = await Post.find(query)
+      .sort({ publishedAt: -1 })
+      .limit(limit)
+      .populate("relatedStories", "_id title summary imageUrl")
+      .lean();
+    let nextCursor = null;
+    if (posts.length === limit) {
+      nextCursor = posts[posts.length - 1].publishedAt;
+    }
+    res.json({ status: "success", posts, nextCursor });
+  } catch (err) {
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
 app.get("/api/post/:id", async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id))
       return res.status(400).json({ error: "Invalid Post ID format." });
-    }
-    const post = await Post.findById(req.params.id).lean();
+    const post = await Post.findById(req.params.id)
+      .populate("relatedStories", "_id title")
+      .lean();
     if (!post) return res.status(404).json({ error: "Post not found." });
     res.json({ status: "success", post });
   } catch (err) {
@@ -1047,536 +923,32 @@ app.get("/api/post/:id", async (req, res) => {
   }
 });
 
-// CREATE A NEW POST (FOR ADMIN DASHBOARD)
-// ✅ ADD THIS ENDPOINT TO CREATE A NEW POST
 app.post("/api/post", async (req, res) => {
-  console.log(req.body);
   try {
-    // Create a new Post document using the data from the request body
-    const newPost = new Post(req.body);
-
-    // Save the new document to the database
+    const newPostData = {
+      ...req.body,
+      sourceType: "manual",
+      publishedAt: new Date(),
+    };
+    const { categories, topCategory } = classifyArticle(
+      newPostData.title + " " + (newPostData.summary || "")
+    );
+    newPostData.categories = categories;
+    newPostData.topCategory = topCategory;
+    const newPost = new Post(newPostData);
     await newPost.save();
-
-    // Send a success response with the newly created post
+    await sendNotificationForPost(newPost);
     res.status(201).json({ status: "success", post: newPost });
   } catch (err) {
-    // If an error occurs (e.g., validation fails, database error)
-    console.error("❌ Error Creating Post:", err.message);
     res
       .status(500)
       .json({ error: "Failed to create post", details: err.message });
   }
 });
 
-// UPDATE A POST BY ID (Corrected for Dashboard)
-app.put("/api/post/:id", async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ error: "Invalid post ID" });
-    }
-    const updatedPost = await Post.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
-    if (!updatedPost) return res.status(404).json({ error: "Post not found" });
-    res.json({ status: "success", post: updatedPost });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Failed to update post", details: err.message });
-  }
-});
-
-// DELETE A POST BY ID (Corrected for Dashboard)
-app.delete("/api/post/:id", async (req, res) => {
-  try {
-    const deleted = await Post.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ error: "Post not found" });
-    res.json({ status: "success", message: "Post deleted successfully" });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Failed to delete post", details: err.message });
-  }
-});
-
-
-// ఇమేజ్ URL ను తీసుకొని DBలో నిల్వ చేయడానికి POST ఎండ్‌పాయింట్
-app.post('/api/store-image-url', async (req, res) => {
-    try {
-        const { imageUrl, title } = req.body;
-
-        if (!imageUrl) {
-            return res.status(400).json({ success: false, message: 'imageUrl అవసరం.' });
-        }
-
-        // కొత్త డాక్యుమెంట్ సృష్టించి, ప్రత్యేక కలెక్షన్లో సేవ్ చేయండి
-        const newImage = new ImageModel({
-            imageUrl,
-            title: title || 'పేరు లేని ఇమేజ్',
-        });
-
-        const savedImage = await newImage.save();
-
-        res.status(201).json({ 
-            success: true, 
-            message: 'ఇమేజ్ URL విజయవంతంగా నిల్వ చేయబడింది', 
-            data: savedImage 
-        });
-    } catch (error) {
-        console.error('డేటాను నిల్వ చేయడంలో ఎర్రర్:', error);
-        res.status(500).json({ success: false, message: 'సర్వర్ ఎర్రర్' });
-    }
-});
-
-// బ్రౌజర్ టెస్టింగ్ కోసం రూట్ (POST అభ్యర్థనను అనుకరించే HTML ను ఇస్తుంది)
-app.get('/store-image-test', (req, res) => {
-    res.send(`
-        <h2>ఇమేజ్ URL ను స్టోర్ చేయండి (POST అభ్యర్థన అవసరం)</h2>
-        <form action="/api/store-image-url" method="POST">
-            <label for="imageUrl">ఇమేజ్ URL:</label><br>
-            <input type="text" id="imageUrl" name="imageUrl" value="https://example.com/image.jpg"><br><br>
-            <label for="title">శీర్షిక (ఐచ్ఛికం):</label><br>
-            <input type="text" id="title" name="title" value="నా పాత అప్‌లోడ్"><br><br>
-            <button type="submit">సేవ్ చేయండి</button>
-        </form>
-        <p><strong>గమనిక:</strong> ఈ ఫామ్ ఒక సరళమైన POST అభ్యర్థనను పంపుతుంది. నిజ జీవితంలో, మీరు సాధారణంగా బ్రౌజర్ నుండి JSON డేటాతో fetch() లేదా axios ఉపయోగించాలి.</p>
-    `);
-});
-
-
-
-
-
-// ✅ ===============================================================
-// ✅ END: NEW & CORRECTED ENDPOINTS FOR ADMIN DASHBOARD
-// ✅ ===============================================================
-
-// =================================================================
-// 6. API ENDPOINTS
-// =================================================================
-
-app.get("/", (req, res) => res.send("API Server is running."));
-
-// =================================================================
-// ✅ NEW ENDPOINT: FETCH & STORE IMAGE URLS FROM 'posts' COLLECTION
-// =================================================================
-// ✅ NEW ENDPOINT: Fetch Paginated Images from saved_image_data
-app.get("/api/images", async (req, res) => {
-    try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 24;
-        const skip = (page - 1) * limit;
-
-        const images = await ImageModel.find({})
-            .sort({ createdAt: -1 }) // Sort by newest first
-            .skip(skip)
-            .limit(limit)
-            .select("imageUrl title _id") // Only return necessary fields
-            .lean();
-
-        const totalImages = await ImageModel.countDocuments({});
-        const totalPages = Math.ceil(totalImages / limit);
-
-        res.json({
-            status: "success",
-            images: images,
-            page,
-            totalPages,
-            totalImages,
-        });
-    } catch (err) {
-        console.error("❌ Error fetching image gallery data:", err);
-        res.status(500).json({ status: "error", message: "Failed to fetch image gallery data." });
-    }
-});
-
-
-// ✅ NEW ENDPOINT: FETCH & STORE IMAGE URLS FROM 'posts' COLLECTION
-app.get('/api/migrate-image-urls', async (req, res) => {
-  try {
-    // 1. 'posts' కలెక్షన్ నుండి 'imageUrl' ఫీల్డ్‌ను మాత్రమే ఫెచ్ చేయండి
-    // $ne: null మరియు $ne: "" ఉపయోగించి imageUrl ఉన్న డాక్యుమెంట్లను మాత్రమే ఫిల్టర్ చేయండి
-    const postsWithUrls = await Post.find(
-      { imageUrl: { $ne: null, $ne: "" } }, 
-      { imageUrl: 1, title: 1, _id: 0 }
-    ).lean();
-
-    if (postsWithUrls.length === 0) {
-      return res.status(200).json({
-        status: "success",
-        message: 'posts కలెక్షన్లో ఇమేజ్ URL ఉన్న డాక్యుమెంట్లు ఏవీ లేవు.'
-      });
-    }
-
-    // 2. కొత్త కలెక్షన్లో నిల్వ చేయడానికి డేటాను సిద్ధం చేయండి
-    const imagesToStore = postsWithUrls.map(post => ({
-      imageUrl: post.imageUrl,
-      title: post.title || 'Source Post Image',
-      sourceCollection: 'posts'
-    }));
-
-    // 3. 'saved_image_data' కలెక్షన్‌లో డూప్లికేట్‌లను విస్మరించి బల్క్‌గా నిల్వ చేయండి
-    let successfulInserts = 0;
-    
-    // insertMany() ను ప్రయత్నించండి, డూప్లికేట్ ఎర్రర్‌లను పట్టించుకోవద్దు (ordered: false)
-    const result = await ImageModel.insertMany(imagesToStore, { ordered: false })
-      .catch(error => {
-        // డూప్లికేట్ ఎర్రర్‌లను హ్యాండిల్ చేయండి (11000)
-        if (error.code === 11000) {
-          // ఇక్కడ error.result ను ఉపయోగించి ఇన్సర్ట్ అయిన వాటి సంఖ్యను తెలుసుకోవచ్చు
-          successfulInserts = error.result?.nInserted || 0;
-          console.warn(`⚠️ Warning: ${imagesToStore.length - successfulInserts} duplicate image URLs skipped.`);
-          return error.result; 
-        }
-        throw error; // ఇతర ఎర్రర్లను త్రో చేయండి
-      });
-      
-    successfulInserts = successfulInserts || result.length;
-
-
-    res.status(200).json({
-      status: "success",
-      message: `${postsWithUrls.length} పోస్ట్‌ల నుండి డేటా ప్రాసెస్ చేయబడింది. ${successfulInserts} కొత్త ఇమేజ్ URL లు saved_image_data కలెక్షన్‌లో నిల్వ చేయబడ్డాయి.`,
-      totalPostsChecked: postsWithUrls.length,
-      storedCount: successfulInserts,
-    });
-
-  } catch (err) {
-    console.error('💥 Error in /api/migrate-image-urls:', err);
-    res.status(500).json({ 
-        status: "error", 
-        message: 'డేటా ఫెచ్ మరియు నిల్వ చేయడంలో ఎర్రర్.', 
-        details: err.message 
-    });
-  }
-});
-
-// =================================================================
-// ✅ NEW ENDPOINT: BROWSER-FRIENDLY SINGLE IMAGE URL STORE (FOR TEST)
-// =================================================================
-app.get('/api/store-image-url', async (req, res) => {
-    // ఇది GET రిక్వెస్ట్ కాబట్టి, బ్రౌజర్ ద్వారా సులభంగా టెస్ట్ చేయడానికి పారామీటర్లను query ద్వారా తీసుకుంటుంది
-    const { imageUrl, title } = req.query;
-
-    if (!imageUrl) {
-        return res.status(400).send(`
-            <h2>ఇమేజ్ URL స్టోర్ టెస్ట్</h2>
-            <p><strong>ఎర్రర్:</strong> imageUrl పారామీటర్ అవసరం.</p>
-            <p>ఉదాహరణ: <code>/api/store-image-url?imageUrl=https://example.com/test.jpg&title=MyTestImage</code></p>
-        `);
-    }
-
-    try {
-        const newImage = new ImageModel({
-            imageUrl,
-            title: title || 'Browser Upload',
-            sourceCollection: 'browser_test'
-        });
-
-        const savedImage = await newImage.save();
-
-        res.status(201).send(`
-            <h2>ఇమేజ్ URL స్టోర్ టెస్ట్ - విజయవంతం</h2>
-            <p><strong>విజయవంతంగా స్టోర్ చేయబడిన ఇమేజ్:</strong></p>
-            <pre>${JSON.stringify(savedImage, null, 2)}</pre>
-            <img src="${imageUrl}" alt="Stored Image" style="max-width: 300px; height: auto;">
-        `);
-
-    } catch (error) {
-        if (error.code === 11000) {
-            return res.status(409).send(`
-                <h2>ఇమేజ్ URL స్టోర్ టెస్ట్ - విఫలం</h2>
-                <p><strong>ఎర్రర్:</strong> ఈ ఇమేజ్ URL ఇప్పటికే కలెక్షన్లో ఉంది (డూప్లికేట్ కీ).</p>
-                <p>URL: ${imageUrl}</p>
-            `);
-        }
-        console.error('Error saving image URL:', error);
-        res.status(500).send(`
-            <h2>ఇమేజ్ URL స్టోర్ టెస్ట్ - విఫలం</h2>
-            <p>సర్వర్ ఎర్రర్: ${error.message}</p>
-        `);
-    }
-});
-// =================================================================
-
-
-app.post("/api/formatted-tweet", async (req, res) => {
-  try {
-    const { tweet_ids, categories, withGemini = true } = req.body;
-
-    if (!tweet_ids || !Array.isArray(tweet_ids) || tweet_ids.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "tweet_ids must be a non-empty array." });
-    }
-
-    const processingPromises = tweet_ids.map(async (tweetId) => {
-      const existingTweet = await Post.findOne({
-        tweetId: tweetId,
-      }).lean();
-
-      const response = await fetch(
-        `https://api.twitterapi.io/twitter/tweets?tweet_ids=${tweetId}`,
-        { headers: { "x-api-key": process.env.TWITTER_API_KEY } }
-      );
-      const data = await response.json();
-
-      if (data.status !== "success" || !data.tweets || !data.tweets.length) {
-        console.warn(`Could not fetch tweet with ID: ${tweetId}`);
-        return null;
-      }
-
-      const tweet = data.tweets[0];
-      let lowestBitrateVideoUrl = null;
-      const mediaEntities = tweet.extendedEntities?.media || [];
-      const videoMedia = mediaEntities.find(
-        (m) =>
-          (m.type === "video" || m.type === "animated_gif") &&
-          m.video_info?.variants
-      );
-
-      if (videoMedia) {
-        const mp4Variants = videoMedia.video_info.variants.filter(
-          (v) =>
-            v.content_type === "video/mp4" && typeof v.bitrate !== "undefined"
-        );
-
-        if (mp4Variants.length > 0) {
-          mp4Variants.sort((a, b) => a.bitrate - b.bitrate);
-          lowestBitrateVideoUrl = mp4Variants[0].url;
-        }
-      }
-
-      const updateData = {
-        tweetId: tweet.id,
-        url: tweet.url,
-        twitterUrl: tweet.twitterUrl,
-        text: tweet.text,
-        createdAt: new Date(tweet.createdAt),
-        lang: tweet.lang,
-        type: tweet.type,
-        videoUrl: lowestBitrateVideoUrl,
-        imageUrl:
-          tweet.extendedEntities?.media?.[0]?.media_url_https ||
-          tweet.media_url_https ||
-          null,
-        media:
-          mediaEntities
-            .map((m) => {
-              if (m.type === "photo") {
-                return {
-                  type: "photo",
-                  url: m.media_url_https || m.media_url,
-                  width: m.sizes?.large?.w || null,
-                  height: m.sizes?.large?.h || null,
-                };
-              } else if (m.type === "video" || m.type === "animated_gif") {
-                let height = 720;
-                let width = null;
-                if (m.video_info?.aspect_ratio) {
-                  const [arW, arH] = m.video_info.aspect_ratio;
-                  width = Math.round((arW / arH) * height);
-                }
-                return {
-                  type: m.type,
-                  variants:
-                    m.video_info?.variants?.map((v) => ({
-                      bitrate: v.bitrate || null,
-                      url: v.url,
-                    })) || [],
-                  width,
-                  height,
-                };
-              }
-              return null;
-            })
-            .filter(Boolean) || [],
-      };
-
-      if (withGemini) {
-        const geminiResult = await processWithGemini(updateData.text);
-        updateData.title = geminiResult.title;
-        updateData.summary = geminiResult.summary;
-      }
-
-      const savedPost = await Post.findOneAndUpdate(
-        { tweetId: updateData.tweetId },
-        {
-          $set: updateData,
-          $addToSet: { categories: { $each: categories || [] } },
-        },
-        { upsert: true, new: true }
-      );
-
-      if (
-        !existingTweet &&
-        savedPost.categories &&
-        savedPost.categories.length > 0
-      ) {
-        console.log(
-          `New post created (${savedPost.tweetId}). Triggering notifications.`
-        );
-        for (const category of savedPost.categories) {
-          sendTargetedNotification({
-            title: savedPost.title,
-            category: category,
-            data: { url: `/post/${savedPost._id}` },
-          });
-        }
-      }
-      return savedPost;
-    });
-
-    const processedTweets = (await Promise.all(processingPromises)).filter(
-      Boolean
-    );
-
-    res.json({
-      status: "success",
-      message: `Processed ${processedTweets.length} tweets.`,
-      tweets: processedTweets,
-    });
-  } catch (err) {
-    console.error("Error processing tweets:", err);
-    res.status(500).json({ error: "Server error", details: err.message });
-  }
-});
-
-app.get("/api/fetch-news-manual", async (req, res) => {
-  await fetchAllNewsSources();
-  res.json({ message: "Manual news fetch process initiated." });
-});
-
-app.get("/api/curated-feed", async (req, res) => {
-  try {
-    // --- Step 1: Log the incoming request query from the URL ---
-    console.log("-----------------------------------------");
-    console.log("Incoming req.query:", req.query);
-
-    const limit = parseInt(req.query.limit) || 20;
-    const categories = req.query.categories
-      ? req.query.categories.split(",").map((c) => c.trim())
-      : [];
-    const cursor = req.query.cursor ? new Date(req.query.cursor) : new Date();
-    const source = req.query.source;
-    console.log(source, categories, cursor);
-
-    // Check if the provided cursor is a valid date
-    if (isNaN(cursor.getTime())) {
-      console.error("Invalid cursor date provided:", req.query.cursor);
-      return res.status(400).json({
-        status: "error",
-        message: "Invalid cursor format. Please use a valid ISO date string.",
-      });
-    }
-
-    // --- Step 2: Build the query object ---
-    const query = { isPublished: true, publishedAt: { $lt: cursor } };
-
-    if (categories.length > 0) {
-      query.categories = { $in: categories };
-    }
-
-    if (source) {
-      // Use a case-insensitive regex for better matching
-      query.source = { $regex: `^${source}$`, $options: "i" };
-    }
-
-    // --- Step 3: NEW - Check for matches before applying the date filter ---
-    const preDateQuery = { ...query };
-    delete preDateQuery.publishedAt; // Temporarily remove date to see if other filters match
-
-    const matchingDocsCount = await Post.countDocuments(preDateQuery);
-    console.log(
-      `Pre-check: Found ${matchingDocsCount} documents matching source/category before applying the date filter.`
-    );
-
-    // --- Step 4: Log the final query that will be sent to MongoDB ---
-    console.log("Final MongoDB Query:", JSON.stringify(query, null, 2));
-
-    // ✅ MODIFICATION: Added .populate() to fetch related story details
-    const posts = await Post.find(query)
-      .sort({ publishedAt: -1 })
-      .limit(limit)
-      .populate("relatedStories", "_id title summary imageUrl") // Populate with essential fields
-      .lean();
-
-    // --- Step 5: Log the result ---
-    console.log(
-      `Final Result: Found ${posts.length} posts after applying all filters.`
-    );
-    console.log("-----------------------------------------");
-
-    let nextCursor = null;
-    if (posts.length === limit) {
-      nextCursor = posts[posts.length - 1].publishedAt;
-    }
-
-    res.json({ status: "success", posts, nextCursor });
-  } catch (err) {
-    console.error("💥 Error in /api/curated-feed:", err);
-    res.status(500).json({ status: "error", message: err.message });
-  }
-});
-
-// Find this endpoint in your server.js
-app.get("/api/post/:id", async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ error: "Invalid Post ID format." });
-    }
-    // ✅ CHANGE THIS LINE
-    const post = await Post.findById(req.params.id)
-      .populate("relatedStories", "_id title") // Populate with _id and title
-      .lean();
-
-    if (!post) return res.status(404).json({ error: "Post not found." });
-    res.json({ status: "success", post });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Failed to fetch post", details: err.message });
-  }
-});
-
-app.get("/api/post/:id", async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ error: "Invalid Post ID format." });
-    }
-    const post = await Post.findById(req.params.id).lean();
-    if (!post) return res.status(404).json({ error: "Post not found." });
-    res.json({ status: "success", post });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Failed to fetch post", details: err.message });
-  }
-});
-
-app.put("/api/post/:id", async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ error: "Invalid post ID" });
-    }
-    const updatedPost = await Post.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
-    if (!updatedPost) return res.status(404).json({ error: "Post not found" });
-    res.json({ status: "success", post: updatedPost });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Failed to update post", details: err.message });
-  }
-});
-
-// Searches for posts by title and summary
 app.get("/api/posts/search", async (req, res) => {
   try {
     const searchQuery = req.query.q;
-    console.log(searchQuery);
     if (!searchQuery) {
       return res.json([]);
     }
@@ -1596,8 +968,26 @@ app.get("/api/posts/search", async (req, res) => {
   }
 });
 
+app.put("/api/post/:id", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id))
+      return res.status(400).json({ error: "Invalid post ID" });
+    const updatedPost = await Post.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+    });
+    if (!updatedPost) return res.status(404).json({ error: "Post not found" });
+    res.json({ status: "success", post: updatedPost });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: "Failed to update post", details: err.message });
+  }
+});
+
 app.delete("/api/post/:id", async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id))
+      return res.status(400).json({ error: "Invalid post ID" });
     const deleted = await Post.findByIdAndDelete(req.params.id);
     if (!deleted) return res.status(404).json({ error: "Post not found" });
     res.json({ status: "success", message: "Post deleted successfully" });
@@ -1610,18 +1000,151 @@ app.delete("/api/post/:id", async (req, res) => {
 
 app.post("/api/register-token", async (req, res) => {
   const { token, categories } = req.body;
-  if (!Expo.isExpoPushToken(token)) {
-    return res.status(400).json({ error: "Invalid Expo Push Token." });
+
+  if (!token || typeof token !== "string" || token.length < 10) {
+    return res.status(400).json({ error: "Invalid FCM Token provided." });
   }
+
   try {
-    await ExpoPushToken.findOneAndUpdate(
+    await FcmToken.findOneAndUpdate(
       { token: token },
+
       { $set: { subscribedCategories: categories || [] } },
+
       { upsert: true }
     );
-    res.status(200).json({ message: "Token and preferences registered." });
+
+    console.log(`📲 Token registered or updated: ${token.slice(0, 20)}...`);
+
+    res.status(200).json({ message: "Token registered successfully." });
   } catch (error) {
-    res.status(500).json({ error: "Failed to register token." });
+    console.error("❌ Failed to register FCM token:", error);
+
+    res.status(500).json({ error: "Server error while registering token." });
+  }
+});
+
+// ✅ --- FIX #3: USE ROBUST, TWEET-SPECIFIC LOGIC ---
+app.post("/api/formatted-tweet", async (req, res) => {
+  try {
+    const { tweet_ids } = req.body;
+    if (!tweet_ids || !Array.isArray(tweet_ids) || tweet_ids.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "tweet_ids must be a non-empty array." });
+    }
+
+    const successfulPosts = [];
+    const failedIds = [];
+
+    for (const tweetId of tweet_ids) {
+      try {
+        const response = await fetch(
+          `https://api.twitterapi.io/twitter/tweets?tweet_ids=${tweetId}`,
+          { headers: { "x-api-key": TWITTER_API_IO_KEY } }
+        );
+        const data = await response.json();
+
+        if (data.status !== "success" || !data.tweets || !data.tweets.length) {
+          console.warn(`Could not fetch or find tweet with ID: ${tweetId}`);
+          failedIds.push(tweetId);
+          continue;
+        }
+
+        const tweet = data.tweets[0];
+        const geminiResult = await processWithGemini(tweet.text);
+        const { categories, topCategory } = classifyArticle(
+          `${geminiResult.title} ${geminiResult.summary}`
+        );
+
+        const postData = {
+          title: geminiResult.title,
+          summary: geminiResult.summary,
+          text: tweet.text,
+          url: tweet.url,
+          tweetId: tweet.id,
+          twitterUrl: tweet.twitterUrl,
+          source: "Twitter",
+          sourceType: "tweet_api",
+          publishedAt: new Date(tweet.createdAt),
+          lang: tweet.lang,
+          categories: categories,
+          topCategory: topCategory,
+          imageUrl: tweet.extendedEntities?.media?.[0]?.media_url_https || null,
+          media: (tweet.extendedEntities?.media || []).map((m) => ({
+            type: m.type,
+            url: m.media_url_https,
+            variants:
+              m.video_info?.variants
+                ?.filter((v) => v.content_type === "video/mp4")
+                .map((v) => ({
+                  bitrate: v.bitrate || 0,
+                  url: v.url,
+                })) || [],
+          })),
+        };
+
+        const updatedOrCreatedPost = await Post.findOneAndUpdate(
+          { tweetId: tweet.id },
+          { $set: postData },
+          { new: true, upsert: true, setDefaultsOnInsert: true }
+        ).lean();
+
+        // Check if the post was just created by comparing timestamps
+        const isNew =
+          Math.abs(
+            new Date(updatedOrCreatedPost.createdAt) -
+              new Date(updatedOrCreatedPost.updatedAt)
+          ) < 2000;
+        if (isNew) {
+          console.log(
+            `✅ New post from tweet ${tweet.id}. Triggering notification.`
+          );
+          await sendNotificationForPost(updatedOrCreatedPost);
+        }
+
+        successfulPosts.push(updatedOrCreatedPost);
+      } catch (err) {
+        console.error(`❌ Failed to process tweet ID ${tweetId}:`, err);
+        failedIds.push(tweetId);
+      }
+    }
+
+    res.json({
+      status: "success",
+      message: `Processed ${successfulPosts.length} of ${tweet_ids.length} tweets.`,
+      successfulPosts: successfulPosts,
+      failedIds: failedIds,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
+app.get("/api/classify-all", async (req, res) => {
+  try {
+    const articles = await Post.find({
+      $or: [{ categories: { $exists: false } }, { categories: { $size: 0 } }],
+    });
+    let updated = 0;
+    for (let article of articles) {
+      const { categories, topCategory } = classifyArticle(
+        `${article.title || ""} ${article.summary || ""}`
+      );
+      if (categories.length > 0) {
+        article.categories = categories;
+        article.topCategory = topCategory;
+        await article.save();
+        updated++;
+      }
+    }
+    res.json({
+      message: "Classification complete",
+      totalChecked: articles.length,
+      updated,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Something went wrong" });
   }
 });
 
