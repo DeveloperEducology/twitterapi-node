@@ -61,6 +61,40 @@ const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 // 2. MONGODB SETUP & MODELS
 // =================================================================
 
+// =================================================================
+// ✅ NEW SCHEMA: IMAGE_DATA
+// =================================================================
+const ImageSchema = new mongoose.Schema({
+  // ఇమేజ్ యొక్క URL (బయటి స్టోరేజీ నుండి లేదా పోస్ట్ నుండి)
+  imageUrl: {
+    type: String,
+    required: true,
+    unique: true, // ఇమేజ్ URL డూప్లికేట్‌లను నిరోధించడానికి
+  },
+  // ఇమేజ్‌కి సంబంధించిన శీర్షిక
+  title: {
+    type: String,
+    required: false,
+  },
+  // ఏ కలెక్షన్ నుండి వచ్చిందో తెలుసుకోవడానికి (ఉదా: 'posts', 'manual')
+  sourceCollection: {
+    type: String,
+    default: 'manual_upload'
+  },
+  // ఎప్పుడు స్టోర్ చేయబడింది
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  }
+}, { collection: 'saved_image_data' }); // ఇమేజ్ డేటా కోసం ప్రత్యేక కలెక్షన్
+
+const ImageModel = mongoose.model('Image', ImageSchema);
+// =================================================================
+
+
+
+
+
 const mediaSchema = new mongoose.Schema(
   {
     type: { type: String, enum: ["photo", "video", "animated_gif"] },
@@ -833,6 +867,153 @@ app.post("/api/admin/notify/post/:postId", async (req, res) => {
     res.status(500).json({ error: "An unexpected server error occurred." });
   }
 });
+
+
+// ✅ NEW ENDPOINT: Fetch Paginated Images from saved_image_data
+app.get("/api/images", async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 24;
+        const skip = (page - 1) * limit;
+
+        const images = await ImageModel.find({})
+            .sort({ createdAt: -1 }) // Sort by newest first
+            .skip(skip)
+            .limit(limit)
+            .select("imageUrl title _id") // Only return necessary fields
+            .lean();
+
+        const totalImages = await ImageModel.countDocuments({});
+        const totalPages = Math.ceil(totalImages / limit);
+
+        res.json({
+            status: "success",
+            images: images,
+            page,
+            totalPages,
+            totalImages,
+        });
+    } catch (err) {
+        console.error("❌ Error fetching image gallery data:", err);
+        res.status(500).json({ status: "error", message: "Failed to fetch image gallery data." });
+    }
+});
+
+
+// ✅ NEW ENDPOINT: FETCH & STORE IMAGE URLS FROM 'posts' COLLECTION
+app.get('/api/migrate-image-urls', async (req, res) => {
+  try {
+    // 1. 'posts' కలెక్షన్ నుండి 'imageUrl' ఫీల్డ్‌ను మాత్రమే ఫెచ్ చేయండి
+    // $ne: null మరియు $ne: "" ఉపయోగించి imageUrl ఉన్న డాక్యుమెంట్లను మాత్రమే ఫిల్టర్ చేయండి
+    const postsWithUrls = await Post.find(
+      { imageUrl: { $ne: null, $ne: "" } }, 
+      { imageUrl: 1, title: 1, _id: 0 }
+    ).lean();
+
+    if (postsWithUrls.length === 0) {
+      return res.status(200).json({
+        status: "success",
+        message: 'posts కలెక్షన్లో ఇమేజ్ URL ఉన్న డాక్యుమెంట్లు ఏవీ లేవు.'
+      });
+    }
+
+    // 2. కొత్త కలెక్షన్లో నిల్వ చేయడానికి డేటాను సిద్ధం చేయండి
+    const imagesToStore = postsWithUrls.map(post => ({
+      imageUrl: post.imageUrl,
+      title: post.title || 'Source Post Image',
+      sourceCollection: 'posts'
+    }));
+
+    // 3. 'saved_image_data' కలెక్షన్‌లో డూప్లికేట్‌లను విస్మరించి బల్క్‌గా నిల్వ చేయండి
+    let successfulInserts = 0;
+    
+    // insertMany() ను ప్రయత్నించండి, డూప్లికేట్ ఎర్రర్‌లను పట్టించుకోవద్దు (ordered: false)
+    const result = await ImageModel.insertMany(imagesToStore, { ordered: false })
+      .catch(error => {
+        // డూప్లికేట్ ఎర్రర్‌లను హ్యాండిల్ చేయండి (11000)
+        if (error.code === 11000) {
+          // ఇక్కడ error.result ను ఉపయోగించి ఇన్సర్ట్ అయిన వాటి సంఖ్యను తెలుసుకోవచ్చు
+          successfulInserts = error.result?.nInserted || 0;
+          console.warn(`⚠️ Warning: ${imagesToStore.length - successfulInserts} duplicate image URLs skipped.`);
+          return error.result; 
+        }
+        throw error; // ఇతర ఎర్రర్లను త్రో చేయండి
+      });
+      
+    successfulInserts = successfulInserts || result.length;
+
+
+    res.status(200).json({
+      status: "success",
+      message: `${postsWithUrls.length} పోస్ట్‌ల నుండి డేటా ప్రాసెస్ చేయబడింది. ${successfulInserts} కొత్త ఇమేజ్ URL లు saved_image_data కలెక్షన్‌లో నిల్వ చేయబడ్డాయి.`,
+      totalPostsChecked: postsWithUrls.length,
+      storedCount: successfulInserts,
+    });
+
+  } catch (err) {
+    console.error('💥 Error in /api/migrate-image-urls:', err);
+    res.status(500).json({ 
+        status: "error", 
+        message: 'డేటా ఫెచ్ మరియు నిల్వ చేయడంలో ఎర్రర్.', 
+        details: err.message 
+    });
+  }
+});
+
+// =================================================================
+// ✅ NEW ENDPOINT: BROWSER-FRIENDLY SINGLE IMAGE URL STORE (FOR TEST)
+// =================================================================
+app.get('/api/store-image-url', async (req, res) => {
+    // ఇది GET రిక్వెస్ట్ కాబట్టి, బ్రౌజర్ ద్వారా సులభంగా టెస్ట్ చేయడానికి పారామీటర్లను query ద్వారా తీసుకుంటుంది
+    const { imageUrl, title } = req.query;
+
+    if (!imageUrl) {
+        return res.status(400).send(`
+            <h2>ఇమేజ్ URL స్టోర్ టెస్ట్</h2>
+            <p><strong>ఎర్రర్:</strong> imageUrl పారామీటర్ అవసరం.</p>
+            <p>ఉదాహరణ: <code>/api/store-image-url?imageUrl=https://example.com/test.jpg&title=MyTestImage</code></p>
+        `);
+    }
+
+    try {
+        const newImage = new ImageModel({
+            imageUrl,
+            title: title || 'Browser Upload',
+            sourceCollection: 'browser_test'
+        });
+
+        const savedImage = await newImage.save();
+
+        res.status(201).send(`
+            <h2>ఇమేజ్ URL స్టోర్ టెస్ట్ - విజయవంతం</h2>
+            <p><strong>విజయవంతంగా స్టోర్ చేయబడిన ఇమేజ్:</strong></p>
+            <pre>${JSON.stringify(savedImage, null, 2)}</pre>
+            <img src="${imageUrl}" alt="Stored Image" style="max-width: 300px; height: auto;">
+        `);
+
+    } catch (error) {
+        if (error.code === 11000) {
+            return res.status(409).send(`
+                <h2>ఇమేజ్ URL స్టోర్ టెస్ట్ - విఫలం</h2>
+                <p><strong>ఎర్రర్:</strong> ఈ ఇమేజ్ URL ఇప్పటికే కలెక్షన్లో ఉంది (డూప్లికేట్ కీ).</p>
+                <p>URL: ${imageUrl}</p>
+            `);
+        }
+        console.error('Error saving image URL:', error);
+        res.status(500).send(`
+            <h2>ఇమేజ్ URL స్టోర్ టెస్ట్ - విఫలం</h2>
+            <p>సర్వర్ ఎర్రర్: ${error.message}</p>
+        `);
+    }
+});
+// =================================================================
+
+
+
+
+
+
+
 
 // =================================================================
 // 6. API ENDPOINTS
