@@ -761,40 +761,28 @@ app.get("/api/posts", async (req, res) => {
 });
 
 
+// ✅ THIS ENDPOINT IS FULLY UPDATED TO PREVENT DUPLICATE POSTS
 app.get("/api/curated-feed", async (req, res) => {
   try {
     // --- Read parameters from the request URL ---
     const limit = parseInt(req.query.limit) || 20;
     const categories = req.query.categories ? req.query.categories.split(",").filter(c => c) : [];
     const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
-    const source = req.query.source; // ✅ ADDED: Get the source from the query
+    const source = req.query.source;
 
     // --- 1. Define the base filter for matching posts ---
-    const filter = { isPublished: true };
+    const baseFilter = { isPublished: true };
     if (categories.length > 0) {
-      filter.categories = { $in: categories };
+      baseFilter.categories = { $in: categories };
     }
-    if (source) { // ✅ ADDED: Add the source to the main filter if it exists
-      filter.source = source;
-    }
-    
-    // For infinite scroll, modify the filter based on the cursor
-    if (cursor) {
-      filter.publishedAt = { $lt: cursor };
-      // When scrolling, we exclude pinned posts to avoid showing them again
-      filter.pinnedIndex = { $eq: null };
+    if (source) {
+      baseFilter.source = source;
     }
 
     // --- 2. Fetch pinned posts ONLY on the first load (when no cursor is present) ---
     let pinnedPosts = [];
     if (!cursor) {
-      const pinFilter = { isPublished: true, pinnedIndex: { $ne: null } };
-      if (categories.length > 0) {
-        pinFilter.categories = { $in: categories };
-      }
-      if (source) { // ✅ ADDED: Also apply the source filter to the pinned posts query
-        pinFilter.source = source;
-      }
+      const pinFilter = { ...baseFilter, pinnedIndex: { $ne: null } };
       pinnedPosts = await Post.find(pinFilter)
         .sort({ pinnedIndex: 'asc' })
         .populate("relatedStories", "_id title summary imageUrl")
@@ -802,10 +790,18 @@ app.get("/api/curated-feed", async (req, res) => {
     }
     
     // --- 3. Fetch regular, date-sorted posts ---
+    // ✅ FIX: The filter for regular posts now ALWAYS excludes pinned items.
+    const regularPostsFilter = { ...baseFilter, pinnedIndex: { $eq: null } };
+    
+    // If we have a cursor, add it to the filter to get the next page
+    if (cursor) {
+      regularPostsFilter.publishedAt = { $lt: cursor };
+    }
+    
     const remainingLimit = limit - pinnedPosts.length;
     let regularPosts = [];
     if (remainingLimit > 0) {
-        regularPosts = await Post.find(filter)
+        regularPosts = await Post.find(regularPostsFilter)
             .sort({ publishedAt: -1 })
             .limit(remainingLimit)
             .populate("relatedStories", "_id title summary imageUrl")
@@ -828,7 +824,6 @@ app.get("/api/curated-feed", async (req, res) => {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
-
 
 app.get("/api/post/:id", async (req, res) => {
   try {
