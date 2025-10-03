@@ -29,10 +29,20 @@ const SELF_URL =
 const TWITTER_API_IO_KEY = process.env.TWITTER_API_KEY;
 
 // --- Firebase Admin SDK Setup ---
-const serviceAccount = JSON.parse(fs.readFileSync("./serviceAccountKey.json"));
+// const serviceAccount = JSON.parse(fs.readFileSync("./serviceAccountKey.json"));
+// admin.initializeApp({
+//   credential: admin.credential.cert(serviceAccount),
+// });
+
+
+
+// --- Firebase Admin SDK Setup ---
+const serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
+
 
 // --- Source Lists ---
 const RSS_SOURCES = [
