@@ -51,13 +51,14 @@ const RSS_SOURCES = [
    // { url: "https://www.v6velugu.com/feed/", name: "V6" },
   
    { url: "https://telugu.gulte.com/feed", name: "gulte" },
-  // { url: "", name: "" },
+  { url: "https://telugu.mykhel.com/rss/feeds/mykhel-telugu-fb.xml", name: "MyKhel" },
   { url: "https://10tv.in/latest/feed", name: "10tv" },
   {
     url: "https://telugu.hindustantimes.com/rss/sports",
     name: "Hindustan Times Telugu",
   },
   { url: "https://feeds.feedburner.com/ndtvnews-latest", name: "NDTV News" },
+  { url: "", name: "" },
 ];
 
 // ✅ NEW: DICTIONARY FOR AUTOMATIC CATEGORY-WISE TAGGING
