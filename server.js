@@ -48,7 +48,7 @@ admin.initializeApp({
 const RSS_SOURCES = [
   { url: "https://ntvtelugu.com/feed", name: "NTV Telugu" },
   { url: "https://tv9telugu.com/feed", name: "TV9 Telugu" },
-   { url: "https://www.v6velugu.com/feed/", name: "V6" },
+   // { url: "https://www.v6velugu.com/feed/", name: "V6" },
   
    { url: "https://telugu.gulte.com/feed", name: "gulte" },
   // { url: "", name: "" },
