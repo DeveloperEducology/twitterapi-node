@@ -1809,6 +1809,114 @@ app.get("/api/classify-all", async (req, res) => {
   }
 });
 
+
+/**
+ * GET /api/posts/by-source
+ * Groups the most recent posts by their source.
+ * @query {number} limit - The number of posts to return for each source. Defaults to 25.
+ */
+app.get("/api/posts/by-source", async (req, res) => {
+  try {
+    // 1. Parse the limit from query params, with a default and a maximum
+    const limitPerSource = parseInt(req.query.limit, 10) || 25;
+    if (limitPerSource > 100) {
+        return res.status(400).json({ status: "error", message: "Limit cannot exceed 100." });
+    }
+
+    console.log('limitPerSource', limitPerSource)
+
+    // 2. Use MongoDB's Aggregation Pipeline for efficient grouping and sorting
+    const aggregationResult = await Post.aggregate([
+      // Stage 1: Sort all posts by creation date, newest first
+      { $sort: { createdAt: -1 } },
+      
+      // Stage 2: Group posts by the 'source' field
+      {
+        $group: {
+          _id: "$source", // The field to group by
+          posts: { $push: "$$ROOT" }, // Push the entire post document into a 'posts' array
+        },
+      },
+
+      // Stage 3: Project the fields to reshape the output
+      {
+        $project: {
+          _id: 0, // Exclude the default _id field
+          source: "$_id", // Rename _id (which is the source name) to 'source'
+          // Take a slice of the posts array to apply the limit
+          posts: { $slice: ["$posts", limitPerSource] }, 
+        },
+      },
+    ]);
+
+    // 3. Transform the aggregation result array into the desired key-value object format
+    // From: [{ source: "SourceA", posts: [...] }, { source: "SourceB", posts: [...] }]
+    // To:   { "SourceA": [...], "SourceB": [...] }
+    const postsBySource = aggregationResult.reduce((acc, group) => {
+      acc[group.source] = group.posts;
+      return acc;
+    }, {});
+    
+    // 4. Send the successful response
+    res.status(200).json({
+      status: "success",
+      postsBySource: postsBySource,
+    });
+
+  } catch (error) {
+    console.error("Error fetching posts by source:", error);
+    res.status(500).json({ status: "error", message: "Internal Server Error" });
+  }
+});
+
+
+// 🚀 NEW ENDPOINT: Get a list of all unique source names
+app.get("/api/sources", async (req, res) => {
+  try {
+    // Use 'distinct' to efficiently get an array of unique source values
+    const sources = await Post.distinct("source");
+    res.status(200).json({ status: "success", sources });
+  } catch (error) {
+    console.error("Error fetching sources:", error);
+    res.status(500).json({ status: "error", message: "Internal Server Error" });
+  }
+});
+
+// 🚀 NEW ENDPOINT: Get paginated posts for a specific source
+app.get("/api/posts/source/:sourceName", async (req, res) => {
+  try {
+    const { sourceName } = req.params;
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 15;
+    const skip = (page - 1) * limit;
+
+    // To check if there are more posts, we fetch one extra document than the limit
+    const posts = await Post.find({ source: decodeURIComponent(sourceName) })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit + 1); // Fetch one extra
+
+    // Determine if there are more posts to load
+    const hasMore = posts.length > limit;
+
+    // If we fetched an extra post, remove it from the response array
+    if (hasMore) {
+      posts.pop();
+    }
+    
+    res.status(200).json({
+      status: "success",
+      posts: posts,
+      hasMore: hasMore, // Send this boolean to the frontend
+    });
+
+  } catch (error) {
+    console.error("Error fetching posts for source:", error);
+    res.status(500).json({ status: "error", message: "Internal Server Error" });
+  }
+});
+
+
 // =================================================================
 // 7. START SERVER
 // =================================================================
