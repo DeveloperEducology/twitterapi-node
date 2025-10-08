@@ -55,8 +55,8 @@ const RSS_SOURCES = [
   { url: "https://www.freepressjournal.in/stories.rss", name: "Free Press Journal" },
 {url: "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml", name: "News18"},
     { url: "https://10tv.in/latest/feed", name: "10tv" },
-  // { url: "", name: "" },
-
+  // { "", name: "" },
+{ url: "https://static.cricinfo.com/rss/livescores.xml", name: "CrickInfo" },
   { url: "https://feeds.feedburner.com/ndtvnews-latest", name: "NDTV News" },
 ];
 
