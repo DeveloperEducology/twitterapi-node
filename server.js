@@ -48,6 +48,7 @@ admin.initializeApp({
 const RSS_SOURCES = [
   // 📰 Major Telugu News Channels
   { url: "https://ntvtelugu.com/feed", name: "NTV Telugu", category: "News" },
+   { url: "https://www.bigtvlive.com/feed", name: "Bigtv Telugu", category: "Telugu" },
   { url: "https://tv9telugu.com/feed", name: "TV9 Telugu", category: "News" },
   { url: "https://10tv.in/latest/feed", name: "10TV Telugu", category: "News" },
   { url: "https://telugustop.com/feed/", name: "TeluguStop", category: "News" },
