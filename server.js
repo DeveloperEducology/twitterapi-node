@@ -46,18 +46,36 @@ admin.initializeApp({
 
 // --- Source Lists ---
 const RSS_SOURCES = [
-  { url: "https://ntvtelugu.com/feed", name: "NTV Telugu" },
-  { url: "https://tv9telugu.com/feed", name: "TV9 Telugu" },
-  {
-    url: "https://telugu.hindustantimes.com/rss/sports",
-    name: "Hindustan Times Telugu",
-  },
-  { url: "https://www.freepressjournal.in/stories.rss", name: "Free Press Journal" },
-{url: "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml", name: "News18"},
-    { url: "https://10tv.in/latest/feed", name: "10tv" },
-  // { "", name: "" },
-{ url: "https://static.cricinfo.com/rss/livescores.xml", name: "CrickInfo" },
-  { url: "https://feeds.feedburner.com/ndtvnews-latest", name: "NDTV News" },
+  // 📰 Major Telugu News Channels
+  { url: "https://ntvtelugu.com/feed", name: "NTV Telugu", category: "News" },
+  { url: "https://tv9telugu.com/feed", name: "TV9 Telugu", category: "News" },
+  { url: "https://10tv.in/latest/feed", name: "10TV Telugu", category: "News" },
+  { url: "https://telugustop.com/feed/", name: "TeluguStop", category: "News" },
+  { url: "https://www.teluguone.com/news/rssDetails.rss", name: "TeluguOne", category: "News" },
+  { url: "https://telugu.oneindia.com/rss/feeds/telugu-news-fb.xml", name: "OneIndia Telugu", category: "News" },
+  { url: "https://telugu.hindustantimes.com/rss/andhra-pradesh", name: "Hindustan Times Telugu (Andhra Pradesh)", category: "Regional News" },
+  { url: "https://telugu.hindustantimes.com/rss/telangana", name: "Hindustan Times Telugu (Telangana)", category: "Regional News" },
+  { url: "https://telugu.hindustantimes.com/rss/sports", name: "Hindustan Times Telugu (Sports)", category: "Sports" },
+
+  // 🌍 National & English News Feeds
+  { url: "https://feeds.feedburner.com/ndtvnews-latest", name: "NDTV News", category: "National News" },
+  { url: "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml", name: "News18 India", category: "National News" },
+  { url: "https://www.freepressjournal.in/stories.rss", name: "Free Press Journal", category: "National News" },
+
+  // 💰 Business / Economy
+  { url: "https://telugu.goodreturns.in/rss/", name: "GoodReturns Telugu", category: "Business" },
+
+  // 🏏 Sports & Live Scores
+  { url: "https://static.cricinfo.com/rss/livescores.xml", name: "CricInfo Live Scores", category: "Sports" },
+  { url: "https://telugu.mykhel.com/rss/feeds/mykhel-telugu-fb.xml", name: "MyKhel Telugu Sports", category: "Sports" },
+  { url: "https://telugu.mykhel.com/rss/feeds/telugu-cricket-fb.xml", name: "MyKhel Telugu Cricket", category: "Sports" },
+
+  // 🎬 Entertainment & Movies
+  { url: "https://www.cinejosh.com/rss-feed.html", name: "CineJosh Telugu", category: "Entertainment" },
+  { url: "https://telugu.nativeplanet.com/rss/feeds/nativeplanet-telugu-fb.xml", name: "NativePlanet Telugu", category: "Entertainment" },
+
+  // 💻 Technology
+  { url: "https://telugu.gizbot.com/rss/feeds/telugu-news-fb.xml", name: "Gizbot Telugu Tech", category: "Technology" },
 ];
 
 // ✅ NEW: DICTIONARY FOR AUTOMATIC CATEGORY-WISE TAGGING
@@ -327,14 +345,38 @@ async function processWithGemini(text) {
   }
 }
 
+// function normalizeUrl(urlString) {
+//   try {
+//     const url = new URL(urlString);
+//     return `${url.protocol}//${url.hostname}${url.pathname}`;
+//   } catch (error) {
+//     return urlString;
+//   }
+// }
+
+// Replace the old normalizeUrl function with this improved version
 function normalizeUrl(urlString) {
   try {
     const url = new URL(urlString);
-    return `${url.protocol}//${url.hostname}${url.pathname}`;
+
+    // 1. Remove 'www.' from the beginning of the hostname
+    const hostname = url.hostname.replace(/^www\./, '');
+
+    // 2. Get the pathname and remove any trailing slash (if it's not the root path "/")
+    let pathname = url.pathname;
+    if (pathname.length > 1 && pathname.endsWith('/')) {
+      pathname = pathname.slice(0, -1);
+    }
+
+    // 3. Reconstruct the URL, standardizing the protocol to https and ignoring query params/hash
+    return `https://${hostname}${pathname}`;
   } catch (error) {
+    // Fallback for invalid URLs, though less likely with feeds
     return urlString;
   }
 }
+
+
 
 function containsTelugu(text) {
   if (!text) return false;
@@ -1298,21 +1340,28 @@ app.get("/api/posts", async (req, res) => {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
+// Main combined feed endpoint
 app.get("/api/curated-feed", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
     const categories = req.query.categories
       ? req.query.categories.split(",").filter((c) => c)
       : [];
+    // UPDATED: Accept multiple sources as a comma-separated string
+    const sources = req.query.sources
+      ? req.query.sources.split(",").filter((s) => s)
+      : [];
     const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
-    const source = req.query.source;
+
     const baseFilter = { isPublished: true };
     if (categories.length > 0) {
       baseFilter.categories = { $in: categories };
     }
-    if (source) {
-      baseFilter.source = source;
+    // UPDATED: Use the $in operator for the sources array
+    if (sources.length > 0) {
+      baseFilter.source = { $in: sources };
     }
+
     let pinnedPosts = [];
     if (!cursor) {
       const pinFilter = { ...baseFilter, pinnedIndex: { $ne: null } };
@@ -1321,10 +1370,12 @@ app.get("/api/curated-feed", async (req, res) => {
         .populate("relatedStories", "_id title summary imageUrl")
         .lean();
     }
+
     const regularPostsFilter = { ...baseFilter, pinnedIndex: { $eq: null } };
     if (cursor) {
       regularPostsFilter.publishedAt = { $lt: cursor };
     }
+
     const remainingLimit = limit - pinnedPosts.length;
     let regularPosts = [];
     if (remainingLimit > 0) {
@@ -1334,12 +1385,14 @@ app.get("/api/curated-feed", async (req, res) => {
         .populate("relatedStories", "_id title summary imageUrl")
         .lean();
     }
+
     const allPosts = [...pinnedPosts, ...regularPosts];
     let nextCursor = null;
     if (allPosts.length > 0 && allPosts.length >= limit) {
       const lastPost = allPosts[allPosts.length - 1];
       nextCursor = lastPost.publishedAt;
     }
+
     res.json({ status: "success", posts: allPosts, nextCursor });
   } catch (err) {
     console.error("Error in /api/curated-feed:", err);
@@ -1347,24 +1400,32 @@ app.get("/api/curated-feed", async (req, res) => {
   }
 });
 
+
+// Pinned posts only endpoint
 app.get("/api/curated-feed/pinned", async (req, res) => {
   try {
     const categories = req.query.categories
       ? req.query.categories.split(",").filter((c) => c)
       : [];
-    const source = req.query.source;
-    const filter = { isPublished: true };
+    // UPDATED: Accept multiple sources
+    const sources = req.query.sources
+      ? req.query.sources.split(",").filter((s) => s)
+      : [];
+
+    const filter = { isPublished: true, pinnedIndex: { $ne: null } };
     if (categories.length > 0) {
       filter.categories = { $in: categories };
     }
-    if (source) {
-      filter.source = source;
+    // UPDATED: Use the $in operator for the sources array
+    if (sources.length > 0) {
+      filter.source = { $in: sources };
     }
-    filter.pinnedIndex = { $ne: null };
+
     const pinnedPosts = await Post.find(filter)
       .sort({ pinnedIndex: "asc" })
       .populate("relatedStories", "_id title summary imageUrl")
       .lean();
+
     res.json({ status: "success", posts: pinnedPosts });
   } catch (err) {
     console.error("Error in /api/curated-feed/pinned:", err);
@@ -1372,41 +1433,50 @@ app.get("/api/curated-feed/pinned", async (req, res) => {
   }
 });
 
+
+// Regular (non-pinned) posts only endpoint
 app.get("/api/curated-feed/regular", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const categories = req.query.categories
       ? req.query.categories.split(",").filter((c) => c)
       : [];
+    // UPDATED: Accept multiple sources
+    const sources = req.query.sources
+      ? req.query.sources.split(",").filter((s) => s)
+      : [];
     const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
-    const source = req.query.source;
-    const filter = { isPublished: true };
+
+    const filter = { isPublished: true, pinnedIndex: { $eq: null } };
     if (categories.length > 0) {
       filter.categories = { $in: categories };
     }
-    if (source) {
-      filter.source = source;
+    // UPDATED: Use the $in operator for the sources array
+    if (sources.length > 0) {
+      filter.source = { $in: sources };
     }
     if (cursor) {
       filter.publishedAt = { $lt: cursor };
     }
-    filter.pinnedIndex = { $eq: null };
+
     const regularPosts = await Post.find(filter)
       .sort({ publishedAt: -1 })
       .limit(limit)
       .populate("relatedStories", "_id title summary imageUrl")
       .lean();
+
     let nextCursor = null;
     if (regularPosts.length === limit) {
       nextCursor = regularPosts[regularPosts.length - 1].publishedAt;
     }
+
     res.json({ status: "success", posts: regularPosts, nextCursor });
-  } catch (err) {
+  } catch (err)
+ {
     console.error("Error in /api/curated-feed/regular:", err);
     res.status(500).json({ status: "error", message: err.message });
   }
 });
-
 // ✅ NEW: Guest User Creation & Token Registration Endpoint
 app.post("/api/register-token", async (req, res) => {
   const { token, deviceId, categories } = req.body;
