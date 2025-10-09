@@ -1,0 +1,5 @@
+2025-10-07 10:47:16 error: ❌ Error logging interaction: Cast to ObjectId failed for value "gen1" (type string) at path "_id" for model "Post"
+2025-10-07 10:47:28 error: ❌ Error logging interaction: Cast to ObjectId failed for value "sports1" (type string) at path "_id" for model "Post"
+2025-10-07 10:47:48 error: ❌ Error logging interaction: Cast to ObjectId failed for value "sports1" (type string) at path "_id" for model "Post"
+2025-10-07 10:49:09 error: ❌ Error logging interaction: Cast to ObjectId failed for value "gen1" (type string) at path "_id" for model "Post"
+2025-10-07 10:49:23 error: ❌ Error logging interaction: Cast to ObjectId failed for value "gen1" (type string) at path "_id" for model "Post"

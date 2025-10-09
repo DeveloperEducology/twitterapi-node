@@ -14,6 +14,7 @@ import * as cheerio from "cheerio";
 import Parser from "rss-parser";
 import fs from "fs";
 import logger from "./logger.js"; // Import the logger
+import { create } from "domain";
 
 dotenv.config();
 
@@ -29,11 +30,14 @@ const SELF_URL =
   process.env.SERVER_URL || `https://twitterapi-node.onrender.com`;
 const TWITTER_API_IO_KEY = process.env.TWITTER_API_KEY;
 
+
+
 // --- Firebase Admin SDK Setup ---
 // const serviceAccount = JSON.parse(fs.readFileSync("./serviceAccountKey.json"));
 // admin.initializeApp({
 //   credential: admin.credential.cert(serviceAccount),
 // });
+
 
 // --- Firebase Admin SDK Setup ---
 const serviceAccount = JSON.parse(
@@ -44,39 +48,158 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
 
+
 // --- Source Lists ---
 const RSS_SOURCES = [
   // 📰 Major Telugu News Channels
   { url: "https://ntvtelugu.com/feed", name: "NTV Telugu", category: "News" },
-   { url: "https://www.bigtvlive.com/feed", name: "Bigtv Telugu", category: "Telugu" },
   { url: "https://tv9telugu.com/feed", name: "TV9 Telugu", category: "News" },
   { url: "https://10tv.in/latest/feed", name: "10TV Telugu", category: "News" },
   { url: "https://telugustop.com/feed/", name: "TeluguStop", category: "News" },
-  { url: "https://www.teluguone.com/news/rssDetails.rss", name: "TeluguOne", category: "News" },
-  { url: "https://telugu.oneindia.com/rss/feeds/telugu-news-fb.xml", name: "OneIndia Telugu", category: "News" },
-  { url: "https://telugu.hindustantimes.com/rss/andhra-pradesh", name: "Hindustan Times Telugu (Andhra Pradesh)", category: "Regional News" },
-  { url: "https://telugu.hindustantimes.com/rss/telangana", name: "Hindustan Times Telugu (Telangana)", category: "Regional News" },
-  { url: "https://telugu.hindustantimes.com/rss/sports", name: "Hindustan Times Telugu (Sports)", category: "Sports" },
+  {
+    url: "https://www.teluguone.com/news/rssDetails.rss",
+    name: "TeluguOne",
+    category: "News",
+  },
+  {
+    url: "https://telugu.oneindia.com/rss/feeds/telugu-news-fb.xml",
+    name: "OneIndia Telugu",
+    category: "News",
+  },
+  {
+    url: "https://telugu.hindustantimes.com/rss/andhra-pradesh",
+    name: "Hindustan Times Telugu (Andhra Pradesh)",
+    category: "Regional News",
+  },
+  {
+    url: "https://telugu.hindustantimes.com/rss/telangana",
+    name: "Hindustan Times Telugu (Telangana)",
+    category: "Regional News",
+  },
+  {
+    url: "https://telugu.hindustantimes.com/rss/sports",
+    name: "Hindustan Times Telugu (Sports)",
+    category: "Sports",
+  },
 
   // 🌍 National & English News Feeds
-  { url: "https://feeds.feedburner.com/ndtvnews-latest", name: "NDTV News", category: "National News" },
-  { url: "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml", name: "News18 India", category: "National News" },
-  { url: "https://www.freepressjournal.in/stories.rss", name: "Free Press Journal", category: "National News" },
+  {
+    url: "https://feeds.feedburner.com/ndtvnews-latest",
+    name: "NDTV News",
+    category: "National News",
+  },
+  {
+    url: "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml",
+    name: "News18 India",
+    category: "National News",
+  },
+  {
+    url: "https://www.freepressjournal.in/stories.rss",
+    name: "Free Press Journal",
+    category: "National News",
+  },
 
   // 💰 Business / Economy
-  { url: "https://telugu.goodreturns.in/rss/", name: "GoodReturns Telugu", category: "Business" },
+  {
+    url: "https://telugu.goodreturns.in/rss/",
+    name: "GoodReturns Telugu",
+    category: "Business",
+  },
 
   // 🏏 Sports & Live Scores
-  { url: "https://static.cricinfo.com/rss/livescores.xml", name: "CricInfo Live Scores", category: "Sports" },
-  { url: "https://telugu.mykhel.com/rss/feeds/mykhel-telugu-fb.xml", name: "MyKhel Telugu Sports", category: "Sports" },
-  { url: "https://telugu.mykhel.com/rss/feeds/telugu-cricket-fb.xml", name: "MyKhel Telugu Cricket", category: "Sports" },
+  {
+    url: "https://static.cricinfo.com/rss/livescores.xml",
+    name: "CricInfo Live Scores",
+    category: "Sports",
+  },
+  {
+    url: "https://telugu.mykhel.com/rss/feeds/mykhel-telugu-fb.xml",
+    name: "MyKhel Telugu Sports",
+    category: "Sports",
+  },
+  {
+    url: "https://telugu.mykhel.com/rss/feeds/telugu-cricket-fb.xml",
+    name: "MyKhel Telugu Cricket",
+    category: "Sports",
+  },
 
   // 🎬 Entertainment & Movies
-  { url: "https://www.cinejosh.com/rss-feed.html", name: "CineJosh Telugu", category: "Entertainment" },
-  { url: "https://telugu.nativeplanet.com/rss/feeds/nativeplanet-telugu-fb.xml", name: "NativePlanet Telugu", category: "Entertainment" },
+  {
+    url: "https://www.cinejosh.com/rss-feed.html",
+    name: "CineJosh Telugu",
+    category: "Entertainment",
+  },
+  {
+    url: "https://telugu.nativeplanet.com/rss/feeds/nativeplanet-telugu-fb.xml",
+    name: "NativePlanet Telugu",
+    category: "Entertainment",
+  },
 
   // 💻 Technology
-  { url: "https://telugu.gizbot.com/rss/feeds/telugu-news-fb.xml", name: "Gizbot Telugu Tech", category: "Technology" },
+  {
+    url: "https://telugu.gizbot.com/rss/feeds/telugu-news-fb.xml",
+    name: "Gizbot Telugu Tech",
+    category: "Technology",
+  },
+];
+
+// 🚀 NEW: YouTube RSS Sources
+const YOUTUBE_RSS_SOURCES = [
+  // { url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCmqfX0S3x0I3uwLkPdpX03w", name: "Star Sports", category: "Sports", type: "youtube" },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCmqfX0S3x0I3uwLkPdpX03w",
+    name: "Star Sports",
+    category: "News",
+    type: "youtube",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCPXTXMecYqnRKNdqdVOGSFg",
+    name: "Tv9",
+    category: "Tel",
+    type: "youtube",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCQ_FATLW83q-4xJ2fsi8qAw",
+    name: "Sakshi",
+    category: "Tel",
+    type: "youtube",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCPXTXMecYqnRKNdqdVOGSFg",
+    name: "Tv9",
+    category: "Tel",
+    type: "youtube",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCZFMm1mMw0F81Z37aaEzTUA",
+    name: "NDTV",
+    category: "video",
+    type: "youtube",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?user=spacexchannel",
+    name: "SpaceX",
+    category: "Technology",
+    type: "youtube",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?user=GoogleTechTalks",
+    name: "Google Tech Talks",
+    category: "Technology",
+    type: "youtube",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?user=cricketaustraliatv",
+    name: "Cricket Australia",
+    category: "Sports",
+    type: "youtube",
+  },
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCSRQXk5yErn4e14vN76upOw",
+    name: "Cricbuzz",
+    category: "Sports",
+    type: "youtube",
+  },
 ];
 
 // ✅ NEW: DICTIONARY FOR AUTOMATIC CATEGORY-WISE TAGGING
@@ -226,6 +349,29 @@ const TagSchema = new mongoose.Schema(
 );
 const Tag = mongoose.model("Tag", TagSchema);
 
+// 🚀 NEW: Schema for YouTube videos to be stored in a separate collection
+// In server.js, find your videoSchema and update it
+
+const videoSchema = new mongoose.Schema({
+    videoId: { type: String, required: true, unique: true, index: true },
+    title: { type: String, required: true },
+    link: { type: String, required: true },
+    author: { type: String, required: true },
+    // MODIFIED: Renamed from publishedDate to avoid confusion
+    sourcePublishedAt: { type: Date, index: true },
+    thumbnailUrl: { type: String },
+    description: { type: String },
+    source: { type: String, default: 'youtube' },
+    category: { type: String, index: true },
+    
+    // ✅ NEW: Fields for publishing status
+    isPublished: { type: Boolean, default: false, index: true },
+    publishedAt: { type: Date, default: null, index: true },
+
+}, { timestamps: true, collection: 'videos' });
+
+const Video = mongoose.model("Video", videoSchema);
+
 // ✅ MODIFIED: Enhanced schema for guest user profiles
 const fcmTokenSchema = new mongoose.Schema(
   {
@@ -234,7 +380,7 @@ const fcmTokenSchema = new mongoose.Schema(
     // The FCM token, which can be updated
     token: { type: String, required: true, unique: true },
     // To distinguish between guest and registered users in the future
-    userType: { type: String, enum: ['guest', 'registered'], default: 'guest' },
+    userType: { type: String, enum: ["guest", "registered"], default: "guest" },
     // Explicit preferences
     subscribedCategories: [{ type: String }],
     // Implicit, learned preferences
@@ -263,11 +409,10 @@ const UserInteractionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-const UserInteraction = mongoose.model("UserInteraction", UserInteractionSchema);
-
-
-
-
+const UserInteraction = mongoose.model(
+  "UserInteraction",
+  UserInteractionSchema
+);
 
 mongoose
   .connect(MONGO_URI)
@@ -346,26 +491,17 @@ async function processWithGemini(text) {
   }
 }
 
-// function normalizeUrl(urlString) {
-//   try {
-//     const url = new URL(urlString);
-//     return `${url.protocol}//${url.hostname}${url.pathname}`;
-//   } catch (error) {
-//     return urlString;
-//   }
-// }
-
 // Replace the old normalizeUrl function with this improved version
 function normalizeUrl(urlString) {
   try {
     const url = new URL(urlString);
 
     // 1. Remove 'www.' from the beginning of the hostname
-    const hostname = url.hostname.replace(/^www\./, '');
+    const hostname = url.hostname.replace(/^www\./, "");
 
     // 2. Get the pathname and remove any trailing slash (if it's not the root path "/")
     let pathname = url.pathname;
-    if (pathname.length > 1 && pathname.endsWith('/')) {
+    if (pathname.length > 1 && pathname.endsWith("/")) {
       pathname = pathname.slice(0, -1);
     }
 
@@ -376,8 +512,6 @@ function normalizeUrl(urlString) {
     return urlString;
   }
 }
-
-
 
 function containsTelugu(text) {
   if (!text) return false;
@@ -813,7 +947,6 @@ async function savePost(postData) {
   }
 }
 
-
 // ✅ NEW PERSONALIZATION HELPERS
 /**
  * Calculates a numerical vector representing a user's interests based on their
@@ -867,7 +1000,6 @@ async function generateUserProfileVector(token) {
   );
 }
 
-
 async function updateAllUserProfileVectors() {
   logger.info("🔄 Starting batch update of all user profile vectors...");
   const tokens = await FcmToken.find({}).distinct("token");
@@ -888,7 +1020,6 @@ async function updateAllUserProfileVectors() {
     `✅ Vector update complete. Processed ${successCount} of ${tokens.length} users.`
   );
 }
-
 
 // =================================================================
 // 5. CRON JOBS
@@ -935,6 +1066,12 @@ cron.schedule("*/30 * * * *", async () => {
   console.log(
     `✅ Cron: RSS fetching complete. Added ${newPostsCount} new posts.`
   );
+});
+
+// 🚀 NEW: Add this cron job for fetching YouTube videos automatically
+cron.schedule("0 */4 * * *", async () => {
+  console.log("⏰ Cron: Starting scheduled YouTube feed processing...");
+  await fetchAllYouTubeSources();
 });
 
 async function fetchAllNewsSources() {
@@ -1401,7 +1538,6 @@ app.get("/api/curated-feed", async (req, res) => {
   }
 });
 
-
 // Pinned posts only endpoint
 app.get("/api/curated-feed/pinned", async (req, res) => {
   try {
@@ -1433,7 +1569,6 @@ app.get("/api/curated-feed/pinned", async (req, res) => {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
-
 
 // Regular (non-pinned) posts only endpoint
 app.get("/api/curated-feed/regular", async (req, res) => {
@@ -1472,8 +1607,7 @@ app.get("/api/curated-feed/regular", async (req, res) => {
     }
 
     res.json({ status: "success", posts: regularPosts, nextCursor });
-  } catch (err)
- {
+  } catch (err) {
     console.error("Error in /api/curated-feed/regular:", err);
     res.status(500).json({ status: "error", message: err.message });
   }
@@ -1482,10 +1616,12 @@ app.get("/api/curated-feed/regular", async (req, res) => {
 app.post("/api/register-token", async (req, res) => {
   const { token, deviceId, categories } = req.body;
 
-  console.log('req.body', req.body)
+  console.log("req.body", req.body);
 
   if (!token || !deviceId) {
-    return res.status(400).json({ error: "FCM token and deviceId are required." });
+    return res
+      .status(400)
+      .json({ error: "FCM token and deviceId are required." });
   }
 
   try {
@@ -1506,24 +1642,30 @@ app.post("/api/register-token", async (req, res) => {
         deviceId: deviceId,
         token: token,
         subscribedCategories: categories || [],
-        userType: 'guest'
+        userType: "guest",
       });
       wasCreated = true;
       logger.info(`✅ New guest user created for deviceId: ${deviceId}`);
     }
-    console.log('user', user)
+    console.log("user", user);
     res.status(wasCreated ? 201 : 200).json({
-      message: wasCreated ? "New guest user created successfully." : "Guest user profile updated.",
+      message: wasCreated
+        ? "New guest user created successfully."
+        : "Guest user profile updated.",
       user: {
-          deviceId: user.deviceId,
-          userType: user.userType,
-          subscribedCategories: user.subscribedCategories
-      }
+        deviceId: user.deviceId,
+        userType: user.userType,
+        subscribedCategories: user.subscribedCategories,
+      },
     });
   } catch (error) {
     // Handle cases where the FCM token might already be in use by another deviceId (should be rare)
     if (error.code === 11000 && error.keyPattern && error.keyPattern.token) {
-        return res.status(409).json({ error: 'This FCM token is already registered with another device.' });
+      return res
+        .status(409)
+        .json({
+          error: "This FCM token is already registered with another device.",
+        });
     }
     logger.error("❌ Failed to register device:", error);
     res.status(500).json({ error: "Server error while registering device." });
@@ -1535,7 +1677,9 @@ app.post("/api/interactions", async (req, res) => {
   try {
     const { deviceId, postId, eventType, timeSpent } = req.body;
     if (!deviceId || !postId || !eventType) {
-      return res.status(400).json({ error: "deviceId, postId, and eventType are required." });
+      return res
+        .status(400)
+        .json({ error: "deviceId, postId, and eventType are required." });
     }
     const postExists = await Post.findById(postId);
     if (!postExists) {
@@ -1551,7 +1695,9 @@ app.post("/api/interactions", async (req, res) => {
     res.status(201).json({ status: "success", message: "Interaction logged." });
   } catch (err) {
     logger.error("❌ Error logging interaction:", err);
-    res.status(500).json({ status: "error", message: "Failed to log interaction." });
+    res
+      .status(500)
+      .json({ status: "error", message: "Failed to log interaction." });
   }
 });
 
@@ -1567,54 +1713,77 @@ app.get("/api/feed/for-you", async (req, res) => {
 
     const user = await FcmToken.findOne({ deviceId: deviceId }).lean();
     if (!user) {
-      return res.status(404).json({ error: "User profile not found for this device." });
+      return res
+        .status(404)
+        .json({ error: "User profile not found for this device." });
     }
 
     const userVector = user.profileVector;
     // Cold Start: If the user has no vector, fall back to the generic curated feed
     if (!userVector || Object.keys(userVector).length === 0) {
-      const fallbackPosts = await Post.find({ isPublished: true, pinnedIndex: { $eq: null } })
+      const fallbackPosts = await Post.find({
+        isPublished: true,
+        pinnedIndex: { $eq: null },
+      })
         .sort({ publishedAt: -1 })
         .limit(limit)
         .populate("relatedStories", "_id title summary imageUrl")
         .lean();
-      return res.json({ status: "success", posts: fallbackPosts, personalization: "fallback" });
+      return res.json({
+        status: "success",
+        posts: fallbackPosts,
+        personalization: "fallback",
+      });
     }
-    
+
     // Fetch recent posts to rank
     const candidatePosts = await Post.find({
-        isPublished: true,
-        publishedAt: { $gte: new Date(new Date().setDate(new Date().getDate() - 3)) }
-    }).limit(300).lean();
+      isPublished: true,
+      publishedAt: {
+        $gte: new Date(new Date().setDate(new Date().getDate() - 3)),
+      },
+    })
+      .limit(300)
+      .lean();
 
-    const scoredPosts = candidatePosts.map(post => {
-        let personalizationScore = 0;
-        if(post.categories) {
-            post.categories.forEach(category => {
-                if(userVector[category]) {
-                    personalizationScore += userVector[category];
-                }
-            });
-        }
+    const scoredPosts = candidatePosts.map((post) => {
+      let personalizationScore = 0;
+      if (post.categories) {
+        post.categories.forEach((category) => {
+          if (userVector[category]) {
+            personalizationScore += userVector[category];
+          }
+        });
+      }
 
-        const hoursOld = (new Date() - new Date(post.publishedAt)) / (1000 * 60 * 60);
-        const recencyScore = Math.max(0, 1 - (hoursOld / 72));
+      const hoursOld =
+        (new Date() - new Date(post.publishedAt)) / (1000 * 60 * 60);
+      const recencyScore = Math.max(0, 1 - hoursOld / 72);
 
-        const relevanceScore = (0.7 * personalizationScore) + (0.3 * recencyScore);
-        
-        return { ...post, relevanceScore };
+      const relevanceScore = 0.7 * personalizationScore + 0.3 * recencyScore;
+
+      return { ...post, relevanceScore };
     });
 
-    const personalizedPosts = scoredPosts.sort((a, b) => b.relevanceScore - a.relevanceScore);
-    
-    res.json({ status: "success", posts: personalizedPosts.slice(0, limit), personalization: "active" });
+    const personalizedPosts = scoredPosts.sort(
+      (a, b) => b.relevanceScore - a.relevanceScore
+    );
 
+    res.json({
+      status: "success",
+      posts: personalizedPosts.slice(0, limit),
+      personalization: "active",
+    });
   } catch (err) {
-    logger.error('❌ Error generating personalized feed:', err);
-    res.status(500).json({ status: "error", message: 'Could not generate personalized feed.' });
+    logger.error("❌ Error generating personalized feed:", err);
+    res
+      .status(500)
+      .json({
+        status: "error",
+        message: "Could not generate personalized feed.",
+      });
   }
 });
-
 
 app.get("/api/post/:id", async (req, res) => {
   try {
@@ -1734,25 +1903,6 @@ app.delete("/api/post/:id", async (req, res) => {
   }
 });
 
-// app.post("/api/register-token", async (req, res) => {
-//   const { token, categories } = req.body;
-//   if (!token || typeof token !== "string" || token.length < 10) {
-//     return res.status(400).json({ error: "Invalid FCM Token provided." });
-//   }
-//   try {
-//     await FcmToken.findOneAndUpdate(
-//       { token: token },
-//       { $set: { subscribedCategories: categories || [] } },
-//       { upsert: true }
-//     );
-//     console.log(`📲 Token registered or updated: ${token.slice(0, 20)}...`);
-//     res.status(200).json({ message: "Token registered successfully." });
-//   } catch (error) {
-//     console.error("❌ Failed to register FCM token:", error);
-//     res.status(500).json({ error: "Server error while registering token." });
-//   }
-// });
-
 app.post("/api/formatted-tweet", async (req, res) => {
   try {
     const { tweet_ids } = req.body;
@@ -1785,7 +1935,7 @@ app.post("/api/formatted-tweet", async (req, res) => {
           continue;
         }
         const geminiResult = await processWithGemini(tweet.text);
-        console.log('geminiResult', geminiResult)
+        console.log("geminiResult", geminiResult);
         const { categories, topCategory } = classifyArticle(
           `${geminiResult.title} ${geminiResult.summary}`
         );
@@ -1882,7 +2032,6 @@ app.get("/api/classify-all", async (req, res) => {
   }
 });
 
-
 /**
  * GET /api/posts/by-source
  * Groups the most recent posts by their source.
@@ -1893,16 +2042,18 @@ app.get("/api/posts/by-source", async (req, res) => {
     // 1. Parse the limit from query params, with a default and a maximum
     const limitPerSource = parseInt(req.query.limit, 10) || 25;
     if (limitPerSource > 100) {
-        return res.status(400).json({ status: "error", message: "Limit cannot exceed 100." });
+      return res
+        .status(400)
+        .json({ status: "error", message: "Limit cannot exceed 100." });
     }
 
-    console.log('limitPerSource', limitPerSource)
+    console.log("limitPerSource", limitPerSource);
 
     // 2. Use MongoDB's Aggregation Pipeline for efficient grouping and sorting
     const aggregationResult = await Post.aggregate([
       // Stage 1: Sort all posts by creation date, newest first
       { $sort: { createdAt: -1 } },
-      
+
       // Stage 2: Group posts by the 'source' field
       {
         $group: {
@@ -1917,7 +2068,7 @@ app.get("/api/posts/by-source", async (req, res) => {
           _id: 0, // Exclude the default _id field
           source: "$_id", // Rename _id (which is the source name) to 'source'
           // Take a slice of the posts array to apply the limit
-          posts: { $slice: ["$posts", limitPerSource] }, 
+          posts: { $slice: ["$posts", limitPerSource] },
         },
       },
     ]);
@@ -1929,19 +2080,17 @@ app.get("/api/posts/by-source", async (req, res) => {
       acc[group.source] = group.posts;
       return acc;
     }, {});
-    
+
     // 4. Send the successful response
     res.status(200).json({
       status: "success",
       postsBySource: postsBySource,
     });
-
   } catch (error) {
     console.error("Error fetching posts by source:", error);
     res.status(500).json({ status: "error", message: "Internal Server Error" });
   }
 });
-
 
 // 🚀 NEW ENDPOINT: Get a list of all unique source names
 app.get("/api/sources", async (req, res) => {
@@ -1976,16 +2125,413 @@ app.get("/api/posts/source/:sourceName", async (req, res) => {
     if (hasMore) {
       posts.pop();
     }
-    
+
     res.status(200).json({
       status: "success",
       posts: posts,
       hasMore: hasMore, // Send this boolean to the frontend
     });
-
   } catch (error) {
     console.error("Error fetching posts for source:", error);
     res.status(500).json({ status: "error", message: "Internal Server Error" });
+  }
+});
+
+// 🚀 NEW YOUTUBE VIDEO ENDPOINTS 🚀
+
+/**
+ * Saves a single video to the database, checking for duplicates.
+ * @param {object} videoData - The video data to save.
+ * @returns {boolean} - True if saved, false otherwise.
+ */
+async function saveVideo(videoData) {
+  try {
+    const existingVideo = await Video.findOne({ videoId: videoData.videoId });
+    if (existingVideo) {
+      return false; // Already exists
+    }
+    const newVideo = new Video(videoData);
+    await newVideo.save();
+    logger.info(
+      `✅ Saved new video: "${videoData.title.slice(0, 40)}..." from ${
+        videoData.author
+      }`
+    );
+    return true;
+  } catch (error) {
+    if (error.code !== 11000) {
+      // Ignore duplicate key errors, but log others
+      logger.error(
+        `Error saving video "${videoData.title.slice(0, 40)}...":`,
+        error.message
+      );
+    }
+    return false;
+  }
+}
+
+/**
+ * Fetches and processes all YouTube RSS feeds.
+ */
+/**
+ * Fetches and processes all YouTube RSS feeds.
+ */
+async function fetchAllYouTubeSources() {
+  logger.info("⏰ Starting YouTube RSS feed processing...");
+  let newVideosCount = 0;
+
+  const youtubeParser = new Parser({
+    customFields: {
+      item: [
+        ["media:group", "mediaGroup"],
+        ["yt:videoId", "videoId"],
+      ],
+    },
+  });
+
+  for (const source of YOUTUBE_RSS_SOURCES) {
+    try {
+      const feed = await youtubeParser.parseURL(source.url);
+
+      for (const item of feed.items) {
+        if (!item.videoId || !item.title) continue;
+
+        const saved = await saveVideo({
+          videoId: item.videoId,
+          title: item.title,
+          link: item.link,
+          author: item.author,
+          // MODIFIED: Use the new field name
+          sourcePublishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+          thumbnailUrl: item.mediaGroup?.["media:thumbnail"]?.[0]?.$?.url,
+          description: item.mediaGroup?.["media:description"]?.[0],
+          source: "youtube",
+          category: source.category,
+          // ✅ FIXED: Set default unpublished status
+          isPublished: false,
+        });
+
+        if (saved) newVideosCount++;
+      }
+    } catch (error) {
+      logger.error(
+        `❌ Failed to fetch YouTube RSS feed from ${source.name}: ${error.message}`
+      );
+    }
+  }
+  logger.info(
+    `✅ YouTube RSS fetching complete. Added ${newVideosCount} new videos.`
+  );
+  return newVideosCount;
+}
+/**
+ * GET /api/fetch-youtube-videos
+ * Manually triggers the process to fetch videos from all YouTube RSS feeds.
+ */
+app.get("/api/fetch-youtube-videos", async (req, res) => {
+  try {
+    const count = await fetchAllYouTubeSources();
+    res.status(200).json({
+      status: "success",
+      message: "Manual YouTube videos fetch process initiated.",
+      newVideosAdded: count,
+    });
+  } catch (error) {
+    logger.error("Error in /api/fetch-youtube-videos:", error);
+    res.status(500).json({ status: "error", message: "Internal Server Error" });
+  }
+});
+
+
+/**
+ * 🚀 NEW: POST /api/fetch-single-youtube-channel
+ * Fetches videos from a single YouTube RSS feed by channel ID or username.
+ * Expects a body like: { "id": "your_channel_id", "type": "channel" }
+ * or { "id": "your_username", "type": "user" }
+ */
+app.post("/api/fetch-single-youtube-channel", async (req, res) => {
+    const { id, type = 'user', category = 'General' } = req.body; // Default type to 'user' for backward compatibility
+
+    if (!id) {
+        return res.status(400).json({ status: 'error', message: 'Channel/User ID is required.' });
+    }
+
+    // Construct the correct RSS feed URL based on the type
+    const url = type === 'channel'
+        ? `https://www.youtube.com/feeds/videos.xml?channel_id=${id}`
+        : `https://www.youtube.com/feeds/videos.xml?user=${id}`;
+
+    logger.info(`Attempting to fetch single YouTube source: ${url}`);
+    
+    let newVideosCount = 0;
+    const youtubeParser = new Parser({
+        customFields: {
+            item: [["media:group", "mediaGroup"], ["yt:videoId", "videoId"]],
+        },
+    });
+
+    try {
+        const feed = await youtubeParser.parseURL(url);
+        
+        for (const item of feed.items) {
+            if (!item.videoId || !item.title) continue;
+
+            const saved = await saveVideo({
+                videoId: item.videoId,
+                title: item.title,
+                link: item.link,
+                author: item.author,
+                sourcePublishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
+                thumbnailUrl: item.mediaGroup?.["media:thumbnail"]?.[0]?.$?.url,
+                description: item.mediaGroup?.["media:description"]?.[0],
+                source: "youtube",
+                category: category, // Assign a category, defaults to 'General'
+                isPublished: false,
+            });
+
+            if (saved) newVideosCount++;
+        }
+        
+        res.status(200).json({
+            status: 'success',
+            message: `Fetch complete. Found and saved ${newVideosCount} new videos from '${feed.title}'.`,
+            newVideosAdded: newVideosCount,
+        });
+
+    } catch (error) {
+        logger.error(`❌ Failed to fetch single YouTube RSS feed from ${url}: ${error.message}`);
+        res.status(500).json({ 
+            status: 'error', 
+            message: 'Failed to fetch the RSS feed. Please check the ID and type and ensure the channel has a valid feed.' 
+        });
+    }
+});
+
+
+/**
+ * GET /api/videos (For Public Users)
+ * Retrieves ONLY PUBLISHED videos, sorted by publish date.
+ */
+app.get("/api/videos", async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 30;
+    const skip = (page - 1) * limit;
+
+    // ✅ MODIFIED: Filter now includes isPublished: true
+    const filter = { isPublished: true };
+    if (req.query.category) {
+      filter.category = req.query.category;
+    }
+
+    const videos = await Video.find(filter)
+      // ✅ MODIFIED: Sort by the actual publish date
+      .sort({ publishedAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const totalVideos = await Video.countDocuments(filter);
+    const totalPages = Math.ceil(totalVideos / limit);
+
+    res.json({ status: "success", videos, page, totalPages, totalVideos });
+  } catch (err) {
+    logger.error("Error in /api/videos:", err);
+    res.status(500).json({ status: "error", message: "Failed to fetch videos." });
+  }
+});
+
+/**
+ * 🚀 NEW: GET /api/admin/videos (For Your Dashboard)
+ * Retrieves all videos (published and unpublished) with filtering.
+ */
+/**
+ * 🚀 NEW: GET /api/videos/sources
+ * Retrieves a unique list of all video authors (sources).
+ */
+app.get("/api/videos/sources", async (req, res) => {
+  try {
+    // Use 'distinct' to efficiently get an array of unique author values
+    const sources = await Video.distinct("author");
+    res.json({ status: "success", sources: sources.filter(s => s).sort() }); // Filter out any null/empty sources and sort them
+  } catch (err) {
+    logger.error("Error fetching video sources:", err);
+    res.status(500).json({ status: "error", message: "Failed to fetch video sources" });
+  }
+});
+
+
+/**
+ * 🚀 NEW: GET /api/youtube-sources
+ * Provides the predefined list of YouTube RSS sources from the server configuration.
+ */
+app.get("/api/youtube-sources", (req, res) => {
+    // YOUTUBE_RSS_SOURCES is the constant array defined at the top of your server.js
+    if (YOUTUBE_RSS_SOURCES) {
+        res.json({ status: 'success', sources: YOUTUBE_RSS_SOURCES });
+    } else {
+        res.status(404).json({ status: 'error', message: 'Source list not found on server.' });
+    }
+});
+
+/**
+ * 🚀 UPDATED: GET /api/admin/videos (For Your Dashboard)
+ * Now includes filtering by source (author). The sorting is already latest first.
+ */
+app.get("/api/admin/videos", async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    
+    const filter = {};
+    if (req.query.category) {
+      filter.category = req.query.category;
+    }
+    if (req.query.isPublished === 'true') {
+      filter.isPublished = true;
+    } else if (req.query.isPublished === 'false') {
+      filter.isPublished = false;
+    }
+    // ✅ NEW: Handle source filtering
+    if (req.query.source) {
+      filter.author = req.query.source;
+    }
+
+    const videos = await Video.find(filter)
+      .sort({ createdAt: -1 }) // Sorts by creation date, latest first
+      .skip(skip)
+      .limit(limit)
+      .lean(); // .lean() is important for performance
+      
+    const totalVideos = await Video.countDocuments(filter);
+    const totalPages = Math.ceil(totalVideos / limit);
+
+    res.json({ status: "success", videos, page, totalPages, totalVideos });
+  } catch (err) {
+    logger.error("Error in /api/admin/videos:", err);
+    res.status(500).json({ status: "error", message: "Failed to fetch admin videos." });
+  }
+});
+/**
+ * PUT /api/video/:id (Enhanced Edit Endpoint)
+ * Now automatically sets the publishedAt date when a video is published.
+ */
+app.put("/api/video/:id", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ status: "error", message: "Invalid video ID format" });
+    }
+
+    const payload = { ...req.body };
+
+    // ✅ PRO FEATURE: Automatically set publish date when isPublished becomes true
+    if (payload.isPublished === true) {
+      const video = await Video.findById(req.params.id);
+      // Only set the date if it's being published for the first time
+      if (video && !video.isPublished) {
+        payload.publishedAt = new Date();
+      }
+    }
+
+    const updatedVideo = await Video.findByIdAndUpdate(req.params.id, payload, { new: true });
+
+    if (!updatedVideo) {
+      return res.status(404).json({ status: "error", message: "Video not found" });
+    }
+
+    res.json({ status: "success", video: updatedVideo });
+  } catch (err) {
+    logger.error("Error updating video:", err);
+    res.status(500).json({ status: "error", message: "Failed to update video", details: err.message });
+  }
+});
+
+
+/**
+ * 🚀 NEW: POST /api/videos/bulk-action (For Your Dashboard)
+ * Performs bulk actions (publish, unpublish, delete) on multiple videos.
+ */
+app.post("/api/videos/bulk-action", async (req, res) => {
+    const { action, videoIds } = req.body;
+
+    if (!action || !Array.isArray(videoIds) || videoIds.length === 0) {
+        return res.status(400).json({ status: 'error', message: 'Invalid action or videoIds provided.' });
+    }
+
+    try {
+        let result;
+        switch (action) {
+            case 'publish':
+                result = await Video.updateMany(
+                    { _id: { $in: videoIds } },
+                    { $set: { isPublished: true, publishedAt: new Date() } }
+                );
+                break;
+            case 'unpublish':
+                result = await Video.updateMany(
+                    { _id: { $in: videoIds } },
+                    { $set: { isPublished: false } }
+                );
+                break;
+            case 'delete':
+                result = await Video.deleteMany({ _id: { $in: videoIds } });
+                break;
+            default:
+                return res.status(400).json({ status: 'error', message: 'Unknown action.' });
+        }
+
+        res.json({ status: 'success', message: `Action '${action}' completed.`, details: result });
+
+    } catch (err) {
+        logger.error(`Bulk action '${action}' failed:`, err);
+        res.status(500).json({ status: 'error', message: `Failed to perform bulk action: ${action}` });
+    }
+});
+// 🚀 NEW: EDIT (PUT) endpoint for updating a single video
+app.put("/api/video/:id", async (req, res) => {
+  try {
+    // Validate the MongoDB ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ status: "error", message: "Invalid video ID format" });
+    }
+
+    const updatedVideo = await Video.findByIdAndUpdate(
+      req.params.id,
+      req.body, // The update data from the request body
+      { new: true, runValidators: true } // Options: return the new version, run schema validation
+    );
+
+    if (!updatedVideo) {
+      return res.status(404).json({ status: "error", message: "Video not found" });
+    }
+
+    // Send the updated video object back in the response
+    res.json({ status: "success", video: updatedVideo });
+  } catch (err) {
+    logger.error("Error updating video:", err);
+    res.status(500).json({ status: "error", message: "Failed to update video", details: err.message });
+  }
+});
+
+// 🚀 NEW: DELETE endpoint for removing a single video
+app.delete("/api/video/:id", async (req, res) => {
+  try {
+    // Validate the MongoDB ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return res.status(400).json({ status: "error", message: "Invalid video ID format" });
+    }
+
+    const deletedVideo = await Video.findByIdAndDelete(req.params.id);
+
+    if (!deletedVideo) {
+      return res.status(404).json({ status: "error", message: "Video not found" });
+    }
+
+    res.json({ status: "success", message: "Video deleted successfully" });
+  } catch (err) {
+    logger.error("Error deleting video:", err);
+    res.status(500).json({ status: "error", message: "Failed to delete video", details: err.message });
   }
 });
 
