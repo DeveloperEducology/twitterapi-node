@@ -153,6 +153,12 @@ const YOUTUBE_RSS_SOURCES = [
     type: "youtube",
   },
   {
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCNZCqn4HCVTwx94mKr3Yxeg",
+    name: "Zaffer",
+    category: "Interviews",
+    type: "youtube",
+  },
+  {
     url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCPXTXMecYqnRKNdqdVOGSFg",
     name: "Tv9",
     category: "Tel",
