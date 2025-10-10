@@ -88,10 +88,40 @@ const RSS_SOURCES = [
     name: "NDTV News",
     category: "National News",
   },
+ // {
+ //    url: "",
+ //    name: "",
+ //    category: "National News",
+ //  },
+  {
+    url: "https://www.moneycontrol.com/rss/latestnews.xml",
+    name: "Money Control",
+    category: "National News",
+  },
+  {
+    url: "https://feeds.washingtonpost.com/rss/world?itid=lk_inline_manual_25",
+    name: "Washington Post",
+    category: "Internationak News",
+  },
+  {
+    url: "https://www.dnaindia.com/feeds/india.xml",
+    name: "DNA",
+    category: "National News",
+  },
+  {
+    url: "https://www.firstpost.com/commonfeeds/v1/mfp/rss/india.xml",
+    name: "First Post",
+    category: "National News",
+  },
   {
     url: "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml",
     name: "News18 India",
     category: "National News",
+  },
+   {
+    url: "https://www.theguardian.com/world/rss",
+    name: "theguardian",
+    category: "International News",
   },
   {
     url: "https://www.freepressjournal.in/stories.rss",
