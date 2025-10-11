@@ -52,6 +52,8 @@ admin.initializeApp({
 // --- Source Lists ---
 const RSS_SOURCES = [
   // 📰 Major Telugu News Channels
+  
+  { url: "https://muchata.com/category/inspiring-story/feed/", name: "Muchata Inspire", category: "News" },
   { url: "https://ntvtelugu.com/feed", name: "NTV Telugu", category: "News" },
   { url: "https://tv9telugu.com/feed", name: "TV9 Telugu", category: "News" },
   { url: "https://10tv.in/latest/feed", name: "10TV Telugu", category: "News" },
