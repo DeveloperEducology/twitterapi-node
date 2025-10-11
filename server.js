@@ -93,6 +93,11 @@ const RSS_SOURCES = [
  //    name: "",
  //    category: "National News",
  //  },
+   {
+    url: "https://muchata.com/feed/",
+    name: "Muhata",
+    category: "Telugu News",
+  },
   {
     url: "https://www.moneycontrol.com/rss/latestnews.xml",
     name: "Money Control",
