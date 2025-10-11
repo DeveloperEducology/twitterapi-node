@@ -181,9 +181,9 @@ const RSS_SOURCES = [
 // 🚀 NEW: YouTube RSS Sources
 const YOUTUBE_RSS_SOURCES = [
   // { url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCmqfX0S3x0I3uwLkPdpX03w", name: "Star Sports", category: "Sports", type: "youtube" },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCmqfX0S3x0I3uwLkPdpX03w",
-    name: "Star Sports",
+{
+    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UC8_DdEIW7d1QQ5TfzGuakpw",
+    name: "Mirchi Telugu",
     category: "News",
     type: "youtube",
   },
