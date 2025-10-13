@@ -31,19 +31,19 @@ const SELF_URL =
 const TWITTER_API_IO_KEY = process.env.TWITTER_API_KEY;
 
 // --- Firebase Admin SDK Setup ---
-// const serviceAccount = JSON.parse(fs.readFileSync("./serviceAccountKey.json"));
-// admin.initializeApp({
-//   credential: admin.credential.cert(serviceAccount),
-// });
-
-// --- Firebase Admin SDK Setup ---
-const serviceAccount = JSON.parse(
-  process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
-);
-
+const serviceAccount = JSON.parse(fs.readFileSync("./serviceAccountKey.json"));
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
+
+// --- Firebase Admin SDK Setup ---
+// const serviceAccount = JSON.parse(
+//   process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+// );
+
+// admin.initializeApp({
+//   credential: admin.credential.cert(serviceAccount),
+// });
 
 // --- Source Lists ---
 const RSS_SOURCES = [
@@ -265,20 +265,8 @@ const ImageModel = mongoose.model("Image", ImageSchema);
 
 const mediaSchema = new mongoose.Schema(
   {
-    type: {
-      type: String,
-      enum: ["photo", "video", "animated_gif"],
-    },
+    type: { type: String, enum: ["photo", "video", "animated_gif"] },
     url: String,
-    altText: String,
-
-    // ✨ ADDED THIS FIELD
-    overlayPosition: {
-      type: String,
-      enum: ["top", "middle", "bottom"],
-      default: "middle", // The text will be in the middle by default
-    },
-
     variants: [{ bitrate: Number, url: String }],
     width: Number,
     height: Number,
@@ -312,7 +300,6 @@ const postSchema = new mongoose.Schema(
     media: [mediaSchema],
     videoUrl: String,
     isBreaking: { type: Boolean, default: false },
-    isTwitterLink: { type: Boolean, default: false },
     type: { type: String, default: "normal_post" },
     scheduledFor: { type: Date, default: null },
     tweetId: { type: String, unique: true, sparse: true },
@@ -1516,7 +1503,7 @@ app.get("/api/curated-feed", async (req, res) => {
       const pinFilter = { ...baseFilter, pinnedIndex: { $ne: null } };
       pinnedPosts = await Post.find(pinFilter)
         .sort({ pinnedIndex: "asc" })
-        .populate("relatedStories", "_id title summary imageUrl url media")
+        .populate("relatedStories", "_id title summary imageUrl")
         .lean();
     }
 
@@ -1571,7 +1558,7 @@ app.get("/api/curated-feed/pinned", async (req, res) => {
 
     const pinnedPosts = await Post.find(filter)
       .sort({ pinnedIndex: "asc" })
-      .populate("relatedStories", "_id title summary imageUrl url media")
+      .populate("relatedStories", "_id title summary imageUrl")
       .lean();
 
     res.json({ status: "success", posts: pinnedPosts });
@@ -1975,17 +1962,9 @@ app.post("/api/formatted-tweet", async (req, res) => {
           topCategory: topCategory,
           imageUrl: tweet.extendedEntities?.media?.[0]?.media_url_https || null,
           videoUrl: selectedVideoUrl,
-
           media: (tweet.extendedEntities?.media || []).map((m) => ({
             type: m.type,
             url: m.media_url_https,
-            altText: m.ext_alt_text || null,
-            width: m.sizes?.large?.w || m.sizes?.medium?.w || 0,
-            height: m.sizes?.large?.h || m.sizes?.medium?.h || 0,
-
-            // ✨ ADDED: Explicitly set the overlayPosition to match the schema's default
-            overlayPosition: "middle",
-
             variants:
               m.video_info?.variants
                 ?.filter((v) => v.content_type === "video/mp4")
@@ -1998,6 +1977,7 @@ app.post("/api/formatted-tweet", async (req, res) => {
           `✅ New post #${savedPost.postId} from tweet ${tweet.id}. Triggering notification.`
         );
 
+        // ✅ MODIFIED: Run new logic after saving
         await sendNotificationForPost(savedPost);
         await applyCategoryTags(savedPost);
         await updateRelatedStories(savedPost);
@@ -2476,11 +2456,13 @@ app.put("/api/video/:id", async (req, res) => {
     res.json({ status: "success", video: updatedVideo });
   } catch (err) {
     logger.error("Error updating video:", err);
-    res.status(500).json({
-      status: "error",
-      message: "Failed to update video",
-      details: err.message,
-    });
+    res
+      .status(500)
+      .json({
+        status: "error",
+        message: "Failed to update video",
+        details: err.message,
+      });
   }
 });
 
@@ -2492,10 +2474,12 @@ app.post("/api/videos/bulk-action", async (req, res) => {
   const { action, videoIds } = req.body;
 
   if (!action || !Array.isArray(videoIds) || videoIds.length === 0) {
-    return res.status(400).json({
-      status: "error",
-      message: "Invalid action or videoIds provided.",
-    });
+    return res
+      .status(400)
+      .json({
+        status: "error",
+        message: "Invalid action or videoIds provided.",
+      });
   }
 
   try {
@@ -2529,10 +2513,12 @@ app.post("/api/videos/bulk-action", async (req, res) => {
     });
   } catch (err) {
     logger.error(`Bulk action '${action}' failed:`, err);
-    res.status(500).json({
-      status: "error",
-      message: `Failed to perform bulk action: ${action}`,
-    });
+    res
+      .status(500)
+      .json({
+        status: "error",
+        message: `Failed to perform bulk action: ${action}`,
+      });
   }
 });
 // 🚀 NEW: EDIT (PUT) endpoint for updating a single video
@@ -2561,11 +2547,13 @@ app.put("/api/video/:id", async (req, res) => {
     res.json({ status: "success", video: updatedVideo });
   } catch (err) {
     logger.error("Error updating video:", err);
-    res.status(500).json({
-      status: "error",
-      message: "Failed to update video",
-      details: err.message,
-    });
+    res
+      .status(500)
+      .json({
+        status: "error",
+        message: "Failed to update video",
+        details: err.message,
+      });
   }
 });
 
@@ -2590,11 +2578,13 @@ app.delete("/api/video/:id", async (req, res) => {
     res.json({ status: "success", message: "Video deleted successfully" });
   } catch (err) {
     logger.error("Error deleting video:", err);
-    res.status(500).json({
-      status: "error",
-      message: "Failed to delete video",
-      details: err.message,
-    });
+    res
+      .status(500)
+      .json({
+        status: "error",
+        message: "Failed to delete video",
+        details: err.message,
+      });
   }
 });
 

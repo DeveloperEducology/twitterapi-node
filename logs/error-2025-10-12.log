@@ -1,0 +1,2 @@
+2025-10-12 00:26:51 error: ❌ Error logging interaction: UserInteraction validation failed: eventType: `share_card` is not a valid enum value for path `eventType`.
+2025-10-12 00:26:59 error: ❌ Error logging interaction: UserInteraction validation failed: eventType: `share_card` is not a valid enum value for path `eventType`.
