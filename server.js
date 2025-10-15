@@ -286,6 +286,13 @@ const mediaSchema = new mongoose.Schema(
   { _id: false }
 );
 
+
+const stackedImageSchema = new mongoose.Schema({
+  uri: { type: String, required: true },
+  flex: { type: Number, required: true },
+}, { _id: false });
+
+
 // ✅ FINALIZED SCHEMA
 const postSchema = new mongoose.Schema(
   {
@@ -295,6 +302,7 @@ const postSchema = new mongoose.Schema(
     text: String,
     url: { type: String, unique: true, sparse: true },
     imageUrl: String,
+    stackedImages: [stackedImageSchema],
     relatedStories: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
     source: String,
     sourceType: {
