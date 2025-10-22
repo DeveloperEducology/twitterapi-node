@@ -278,7 +278,11 @@ const mediaSchema = new mongoose.Schema(
       enum: ["top", "middle", "bottom"],
       default: "middle", // The text will be in the middle by default
     },
-
+    objectFit: {
+      type: String,
+      enum: ["cover", "contain", "repeat", "stretch"],
+      default: "cover",
+    },
     variants: [{ bitrate: Number, url: String }],
     width: Number,
     height: Number,
@@ -286,12 +290,13 @@ const mediaSchema = new mongoose.Schema(
   { _id: false }
 );
 
-
-const stackedImageSchema = new mongoose.Schema({
-  uri: { type: String, required: true },
-  flex: { type: Number, required: true },
-}, { _id: false });
-
+const stackedImageSchema = new mongoose.Schema(
+  {
+    uri: { type: String, required: true },
+    flex: { type: Number, required: true },
+  },
+  { _id: false }
+);
 
 // ✅ FINALIZED SCHEMA
 const postSchema = new mongoose.Schema(
@@ -301,8 +306,13 @@ const postSchema = new mongoose.Schema(
     summary: { type: String, index: "text" },
     text: String,
     url: { type: String, unique: true, sparse: true },
+    imageFit: {
+      type: String,
+      enum: ["cover", "contain", "repeat", "stretch"],
+      default: "cover",
+    },
     imageUrl: String,
-    stackedImages: [stackedImageSchema],
+    stackedImages: [stackedImageSchema], // ✅ ADDED: The new field using the sub-schema.
     relatedStories: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
     source: String,
     sourceType: {
@@ -1114,6 +1124,7 @@ async function fetchAllNewsSources() {
             sourceType: "rss",
             publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
             imageUrl: extractImageFromItem(item),
+            imageFit: "cover",
             lang: containsTelugu(item.title) ? "te" : "en",
           });
           if (saved) newPostsCount++;
@@ -1982,6 +1993,7 @@ app.post("/api/formatted-tweet", async (req, res) => {
           categories: categories,
           topCategory: topCategory,
           imageUrl: tweet.extendedEntities?.media?.[0]?.media_url_https || null,
+          imageFit: "cover",
           videoUrl: selectedVideoUrl,
 
           media: (tweet.extendedEntities?.media || []).map((m) => ({
