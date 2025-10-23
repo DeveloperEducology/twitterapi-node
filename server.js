@@ -63,6 +63,11 @@ const RSS_SOURCES = [
     category: "News",
   },
   {
+    url: "https://telugu.gulte.com/feed",
+    name: "gulte",
+    category: "News",
+  },
+  {
     url: "https://telugu.hindustantimes.com/rss/andhra-pradesh",
     name: "Hindustan Times Telugu (Andhra Pradesh)",
     category: "Regional News",
@@ -103,11 +108,7 @@ const RSS_SOURCES = [
   },
 
   // 🏏 Sports & Live Scores
-  {
-    url: "https://static.cricinfo.com/rss/livescores.xml",
-    name: "CricInfo Live Scores",
-    category: "Sports",
-  },
+  
   {
     url: "https://telugu.mykhel.com/rss/feeds/mykhel-telugu-fb.xml",
     name: "MyKhel Telugu Sports",
