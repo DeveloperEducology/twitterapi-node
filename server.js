@@ -330,6 +330,11 @@ const postSchema = new mongoose.Schema(
     isPublished: { type: Boolean, default: true, index: true },
     media: [mediaSchema],
     videoUrl: String,
+    videoFit: {
+      type: String,
+      enum: ["COVER", "CONTAIN", "STRETCH"],
+      default: "CONTAIN",
+    },
     isBreaking: { type: Boolean, default: false },
     isTwitterLink: { type: Boolean, default: false },
     type: { type: String, default: "normal_post" },
