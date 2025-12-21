@@ -564,11 +564,44 @@ function cleanHtmlContent(html) {
     .trim();
 }
 
+// function extractImageFromItem(item) {
+//   if (item.enclosure?.url && item.enclosure.type?.startsWith("image"))
+//     return item.enclosure.url;
+//   const content = item["content:encoded"] || item.content || "";
+//   return cheerio.load(content)("img").first().attr("src") || null;
+// }
+
+
 function extractImageFromItem(item) {
-  if (item.enclosure?.url && item.enclosure.type?.startsWith("image"))
+  // 1. Check for 'media:content' (Used by NDTV and many news sites)
+  // Some parsers return it as an object, others as an array.
+  if (item["media:content"]) {
+    const media = item["media:content"];
+    // If it's an object with a url
+    if (media.url) return media.url;
+    // If it's an array (sometimes happens with multiple resolutions), take the first one
+    if (Array.isArray(media) && media[0]?.url) return media[0].url;
+    // If your parser puts attributes inside a '$' property (common in xml2js)
+    if (media.$ && media.$.url) return media.$.url;
+  }
+
+  // 2. Check for standard RSS 'enclosure'
+  if (item.enclosure && item.enclosure.url) {
     return item.enclosure.url;
+  }
+
+  // 3. Fallback: Check for an <img> tag inside the HTML content
   const content = item["content:encoded"] || item.content || "";
-  return cheerio.load(content)("img").first().attr("src") || null;
+  if (content) {
+    // Basic regex is faster/lighter than loading cheerio just for one attribute
+    const imgMatch = content.match(/<img[^>]+src="([^">]+)"/);
+    if (imgMatch) return imgMatch[1];
+    
+    // OR if you prefer Cheerio (slower but safer):
+    // return cheerio.load(content)("img").first().attr("src") || null;
+  }
+
+  return null;
 }
 
 function classifyArticle(text) {
