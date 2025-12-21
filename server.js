@@ -300,6 +300,14 @@ const stackedImageSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Sub-schema for Related Stories (The fix you requested)
+const relatedStorySchema = new mongoose.Schema({
+    title: { type: String, required: true },
+    summary: String,
+    imageUrl: String,
+    url: String
+}, { _id: false }); // _id: false prevents creating a unique ID for each sub-object
+
 // ✅ FINALIZED SCHEMA
 const postSchema = new mongoose.Schema(
   {
@@ -315,7 +323,7 @@ const postSchema = new mongoose.Schema(
     },
     imageUrl: String,
     stackedImages: [stackedImageSchema], // ✅ ADDED: The new field using the sub-schema.
-    relatedStories: [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
+    relatedStories: [relatedStorySchema],
     source: String,
     sourceType: {
       type: String,
