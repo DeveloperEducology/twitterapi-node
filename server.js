@@ -1010,7 +1010,7 @@ async function savePost(postData) {
     // ✅ MODIFIED: Run new logic after saving
     await sendNotificationForPost(savedPost);
     await applyCategoryTags(savedPost);
-    await updateRelatedStories(savedPost);
+    // await updateRelatedStories(savedPost);
 
     return true;
   } catch (error) {
@@ -1893,7 +1893,7 @@ app.post("/api/post", async (req, res) => {
     // ✅ MODIFIED: Run new logic after saving
     await sendNotificationForPost(newPost);
     await applyCategoryTags(newPost);
-    await updateRelatedStories(newPost);
+    // await updateRelatedStories(newPost);
 
     res.status(201).json({ status: "success", post: newPost });
   } catch (err) {
@@ -1948,7 +1948,7 @@ app.put("/api/post/:id", async (req, res) => {
 
     await applyCategoryTags(post);
     const savedPost = await post.save();
-    await updateRelatedStories(savedPost);
+    // await updateRelatedStories(savedPost);
 
     const finalPost = await Post.findById(req.params.id)
       .populate("relatedStories", "_id title")
@@ -2068,7 +2068,7 @@ app.post("/api/formatted-tweet", async (req, res) => {
 
         await sendNotificationForPost(savedPost);
         await applyCategoryTags(savedPost);
-        await updateRelatedStories(savedPost);
+        // await updateRelatedStories(savedPost);
 
         successfulPosts.push(savedPost);
       } catch (err) {
