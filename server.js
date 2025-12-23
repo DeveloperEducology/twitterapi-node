@@ -85,21 +85,21 @@ const RSS_SOURCES = [
   },
 
   // 🌍 National & English News Feeds
-  {
-    url: "https://feeds.feedburner.com/ndtvnews-latest",
-    name: "NDTV News",
-    category: "National News",
-  },
-  {
-    url: "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml",
-    name: "News18 India",
-    category: "National News",
-  },
-  {
-    url: "https://www.freepressjournal.in/stories.rss",
-    name: "Free Press Journal",
-    category: "National News",
-  },
+  // {
+  //   url: "https://feeds.feedburner.com/ndtvnews-latest",
+  //   name: "NDTV News",
+  //   category: "National News",
+  // },
+  // {
+  //   url: "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml",
+  //   name: "News18 India",
+  //   category: "National News",
+  // },
+  // {
+  //   url: "https://www.freepressjournal.in/stories.rss",
+  //   name: "Free Press Journal",
+  //   category: "National News",
+  // },
 
   // 💰 Business / Economy
   {
