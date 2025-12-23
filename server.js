@@ -1556,6 +1556,9 @@ app.get("/api/posts", async (req, res) => {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
+
+
+
 // Main combined feed endpoint
 app.get("/api/curated-feed", async (req, res) => {
   try {
@@ -1563,47 +1566,60 @@ app.get("/api/curated-feed", async (req, res) => {
     const categories = req.query.categories
       ? req.query.categories.split(",").filter((c) => c)
       : [];
-    // UPDATED: Accept multiple sources as a comma-separated string
+    
+    // Accept multiple sources as a comma-separated string
     const sources = req.query.sources
       ? req.query.sources.split(",").filter((s) => s)
       : [];
+    
     const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
 
-    const baseFilter = { isPublished: true };
+    // ✅ UPDATE: Added 'lang: "te"' to ensure only Telugu posts are fetched
+    const baseFilter = { 
+      isPublished: true,
+      lang: "te" 
+    };
+
     if (categories.length > 0) {
       baseFilter.categories = { $in: categories };
     }
-    // UPDATED: Use the $in operator for the sources array
+    
+    // Use the $in operator for the sources array
     if (sources.length > 0) {
       baseFilter.source = { $in: sources };
     }
 
     let pinnedPosts = [];
+    // Only fetch pinned posts if we are on the first page (no cursor)
     if (!cursor) {
       const pinFilter = { ...baseFilter, pinnedIndex: { $ne: null } };
       pinnedPosts = await Post.find(pinFilter)
         .sort({ pinnedIndex: "asc" })
-        .populate("relatedStories", "_id title summary imageUrl url media")
+        .populate("relatedStories", "_id title summary imageUrl url media") // Populate related stories if needed
         .lean();
     }
 
+    // Regular posts filter (exclude pinned ones)
     const regularPostsFilter = { ...baseFilter, pinnedIndex: { $eq: null } };
+    
     if (cursor) {
       regularPostsFilter.publishedAt = { $lt: cursor };
     }
 
     const remainingLimit = limit - pinnedPosts.length;
     let regularPosts = [];
+
     if (remainingLimit > 0) {
       regularPosts = await Post.find(regularPostsFilter)
         .sort({ publishedAt: -1 })
         .limit(remainingLimit)
-        .populate("relatedStories", "_id title summary imageUrl")
+        .populate("relatedStories", "_id title summary imageUrl") // Populate related stories
         .lean();
     }
 
     const allPosts = [...pinnedPosts, ...regularPosts];
     let nextCursor = null;
+
     if (allPosts.length > 0 && allPosts.length >= limit) {
       const lastPost = allPosts[allPosts.length - 1];
       nextCursor = lastPost.publishedAt;
@@ -1615,6 +1631,68 @@ app.get("/api/curated-feed", async (req, res) => {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
+
+
+
+
+// app.get("/api/curated-feed", async (req, res) => {
+//   try {
+//     const limit = parseInt(req.query.limit) || 20;
+//     const categories = req.query.categories
+//       ? req.query.categories.split(",").filter((c) => c)
+//       : [];
+//     // UPDATED: Accept multiple sources as a comma-separated string
+//     const sources = req.query.sources
+//       ? req.query.sources.split(",").filter((s) => s)
+//       : [];
+//     const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
+
+//     const baseFilter = { isPublished: true };
+//     if (categories.length > 0) {
+//       baseFilter.categories = { $in: categories };
+//     }
+//     // UPDATED: Use the $in operator for the sources array
+//     if (sources.length > 0) {
+//       baseFilter.source = { $in: sources };
+//     }
+
+//     let pinnedPosts = [];
+//     if (!cursor) {
+//       const pinFilter = { ...baseFilter, pinnedIndex: { $ne: null } };
+//       pinnedPosts = await Post.find(pinFilter)
+//         .sort({ pinnedIndex: "asc" })
+//         .populate("relatedStories", "_id title summary imageUrl url media")
+//         .lean();
+//     }
+
+//     const regularPostsFilter = { ...baseFilter, pinnedIndex: { $eq: null } };
+//     if (cursor) {
+//       regularPostsFilter.publishedAt = { $lt: cursor };
+//     }
+
+//     const remainingLimit = limit - pinnedPosts.length;
+//     let regularPosts = [];
+//     if (remainingLimit > 0) {
+//       regularPosts = await Post.find(regularPostsFilter)
+//         .sort({ publishedAt: -1 })
+//         .limit(remainingLimit)
+//         .populate("relatedStories", "_id title summary imageUrl")
+//         .lean();
+//     }
+
+//     const allPosts = [...pinnedPosts, ...regularPosts];
+//     let nextCursor = null;
+//     if (allPosts.length > 0 && allPosts.length >= limit) {
+//       const lastPost = allPosts[allPosts.length - 1];
+//       nextCursor = lastPost.publishedAt;
+//     }
+
+//     res.json({ status: "success", posts: allPosts, nextCursor });
+//   } catch (err) {
+//     console.error("Error in /api/curated-feed:", err);
+//     res.status(500).json({ status: "error", message: err.message });
+//   }
+// });
 
 // Pinned posts only endpoint
 app.get("/api/curated-feed/pinned", async (req, res) => {
