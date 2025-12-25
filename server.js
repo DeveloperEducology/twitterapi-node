@@ -48,11 +48,11 @@ admin.initializeApp({
 // --- Source Lists ---
 const RSS_SOURCES = [
   // 📰 Major Telugu News Channels
-  { url: "https://ntvtelugu.com/feed", name: "NTV Telugu", category: "News" },
-  { url: "https://telugushorts.com/feed", name: "telugushorts.com", category: "News" },
-  { url: "https://tv9telugu.com/feed", name: "TV9 Telugu", category: "News" },
-  { url: "https://10tv.in/latest/feed", name: "10TV Telugu", category: "News" },
-  { url: "https://telugustop.com/feed/", name: "TeluguStop", category: "News" },
+  // { url: "https://ntvtelugu.com/feed", name: "NTV Telugu", category: "News" },
+  // { url: "https://telugushorts.com/feed", name: "telugushorts.com", category: "News" },
+  // { url: "https://tv9telugu.com/feed", name: "TV9 Telugu", category: "News" },
+  // { url: "https://10tv.in/latest/feed", name: "10TV Telugu", category: "News" },
+  // { url: "https://telugustop.com/feed/", name: "TeluguStop", category: "News" },
   {
     url: "https://www.teluguone.com/news/rssDetails.rss",
     name: "TeluguOne",
