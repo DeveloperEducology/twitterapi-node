@@ -64,11 +64,6 @@ const RSS_SOURCES = [
     category: "News",
   },
   {
-    url: "https://telugu.gulte.com/feed",
-    name: "gulte",
-    category: "News",
-  },
-  {
     url: "https://telugu.hindustantimes.com/rss/andhra-pradesh",
     name: "Hindustan Times Telugu (Andhra Pradesh)",
     category: "Regional News",
@@ -612,6 +607,7 @@ function extractImageFromItem(item) {
   return null;
 }
 
+/ ✅ UPDATED: Added new categories to classification logic
 function classifyArticle(text) {
   const keywords = {
     Sports: [
@@ -815,7 +811,73 @@ function classifyArticle(text) {
       "దేవుడు",
       "దేవాలయం",
     ],
+    // ✅ ADDED NEW CATEGORIES
+    Business: [
+      "business",
+      "economy",
+      "stock",
+      "market",
+      "share",
+      "sensex",
+      "nifty",
+      "bank",
+      "rbi",
+      "loan",
+      "tax",
+      "gst",
+      "gold",
+      "rate",
+    ],
+    Education: [
+      "education",
+      "student",
+      "exam",
+      "result",
+      "school",
+      "college",
+      "university",
+      "job",
+      "recruitment",
+      "notification",
+      "dsc",
+      "tspsc",
+      "appsc",
+    ],
+    Health: [
+      "health",
+      "doctor",
+      "hospital",
+      "disease",
+      "virus",
+      "medicine",
+      "heart",
+      "cancer",
+      "fitness",
+      "diet",
+    ],
+    Science: [
+      "science",
+      "space",
+      "nasa",
+      "isro",
+      "satellite",
+      "research",
+      "discovery",
+    ],
+    Astrology: [
+      "astrology",
+      "horoscope",
+      "rasi phalalu",
+      "zodiac",
+      "grahan",
+      "eclipse",
+      "vastu",
+    ],
+    Viral: ["viral", "trending", "social media", "meme", "video"],
+    Photos: ["photo", "gallery", "pics", "images"],
+    Videos: ["video", "watch", "clip"],
   };
+
   const categories = new Set();
   let topCategory = "General";
   let maxCount = 0;
@@ -842,7 +904,6 @@ function classifyArticle(text) {
     topCategory: categories.size > 0 ? topCategory : "General",
   };
 }
-
 // ✅ NEW HELPER FUNCTION TO AUTO-APPLY TAGS
 async function applyCategoryTags(post) {
   const populatedPost = post.populated("tags")
