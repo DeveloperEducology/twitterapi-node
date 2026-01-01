@@ -1560,66 +1560,90 @@ app.get("/api/posts", async (req, res) => {
 
 
 // Main combined feed endpoint
+// ✅ UPDATED Main combined feed endpoint with RANDOM & CATEGORY support
 app.get("/api/curated-feed", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
-    const categories = req.query.categories
-      ? req.query.categories.split(",").filter((c) => c)
-      : [];
-    
-    // Accept multiple sources as a comma-separated string
+    const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
+    const random = req.query.random === "true"; // New random flag
+
+    // Handle Category Filter (singular or plural)
+    let categories = [];
+    if (req.query.categories) {
+      categories = req.query.categories.split(",").filter((c) => c);
+    }
+    if (req.query.category && req.query.category !== "General") {
+      categories.push(req.query.category);
+    }
+
+    // Handle Source Filter
     const sources = req.query.sources
       ? req.query.sources.split(",").filter((s) => s)
       : [];
-    
-    const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
 
-    // ✅ UPDATE: Added 'lang: "te"' to ensure only Telugu posts are fetched
-    const baseFilter = { 
-      isPublished: true,
-      lang: "te" 
-    };
+    const baseFilter = { isPublished: true };
 
     if (categories.length > 0) {
       baseFilter.categories = { $in: categories };
     }
-    
-    // Use the $in operator for the sources array
     if (sources.length > 0) {
       baseFilter.source = { $in: sources };
     }
 
+    // --- CASE 1: RANDOM FEED ---
+    if (random) {
+      // 1. Get random document IDs using $sample aggregation
+      const randomDocs = await Post.aggregate([
+        { $match: baseFilter },
+        { $sample: { size: limit } }, // Pick random docs
+        { $project: { _id: 1 } },
+      ]);
+
+      const randomIds = randomDocs.map((d) => d._id);
+
+      // 2. Fetch full documents populated with related stories
+      const posts = await Post.find({ _id: { $in: randomIds } })
+        .populate("relatedStories", "_id title summary imageUrl")
+        .lean();
+
+      // (Optional) Shuffle again in memory because find() may return sorted by ID
+      const shuffledPosts = posts.sort(() => 0.5 - Math.random());
+
+      return res.json({
+        status: "success",
+        posts: shuffledPosts,
+        nextCursor: null, // No pagination cursor for random feeds
+      });
+    }
+
+    // --- CASE 2: STANDARD CHRONOLOGICAL FEED ---
+
     let pinnedPosts = [];
-    // Only fetch pinned posts if we are on the first page (no cursor)
     if (!cursor) {
       const pinFilter = { ...baseFilter, pinnedIndex: { $ne: null } };
       pinnedPosts = await Post.find(pinFilter)
         .sort({ pinnedIndex: "asc" })
-        .populate("relatedStories", "_id title summary imageUrl url media") // Populate related stories if needed
+        .populate("relatedStories", "_id title summary imageUrl url media")
         .lean();
     }
 
-    // Regular posts filter (exclude pinned ones)
     const regularPostsFilter = { ...baseFilter, pinnedIndex: { $eq: null } };
-    
     if (cursor) {
       regularPostsFilter.publishedAt = { $lt: cursor };
     }
 
     const remainingLimit = limit - pinnedPosts.length;
     let regularPosts = [];
-
     if (remainingLimit > 0) {
       regularPosts = await Post.find(regularPostsFilter)
         .sort({ publishedAt: -1 })
         .limit(remainingLimit)
-        .populate("relatedStories", "_id title summary imageUrl") // Populate related stories
+        .populate("relatedStories", "_id title summary imageUrl")
         .lean();
     }
 
     const allPosts = [...pinnedPosts, ...regularPosts];
     let nextCursor = null;
-
     if (allPosts.length > 0 && allPosts.length >= limit) {
       const lastPost = allPosts[allPosts.length - 1];
       nextCursor = lastPost.publishedAt;
@@ -1631,8 +1655,6 @@ app.get("/api/curated-feed", async (req, res) => {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
-
-
 
 
 // app.get("/api/curated-feed", async (req, res) => {
