@@ -64,6 +64,11 @@ const RSS_SOURCES = [
     category: "News",
   },
   {
+    url: "https://telugu.gulte.com/feed",
+    name: "gulte",
+    category: "News",
+  },
+  {
     url: "https://telugu.hindustantimes.com/rss/andhra-pradesh",
     name: "Hindustan Times Telugu (Andhra Pradesh)",
     category: "Regional News",
@@ -607,7 +612,6 @@ function extractImageFromItem(item) {
   return null;
 }
 
-/ ✅ UPDATED: Added new categories to classification logic
 function classifyArticle(text) {
   const keywords = {
     Sports: [
@@ -811,73 +815,7 @@ function classifyArticle(text) {
       "దేవుడు",
       "దేవాలయం",
     ],
-    // ✅ ADDED NEW CATEGORIES
-    Business: [
-      "business",
-      "economy",
-      "stock",
-      "market",
-      "share",
-      "sensex",
-      "nifty",
-      "bank",
-      "rbi",
-      "loan",
-      "tax",
-      "gst",
-      "gold",
-      "rate",
-    ],
-    Education: [
-      "education",
-      "student",
-      "exam",
-      "result",
-      "school",
-      "college",
-      "university",
-      "job",
-      "recruitment",
-      "notification",
-      "dsc",
-      "tspsc",
-      "appsc",
-    ],
-    Health: [
-      "health",
-      "doctor",
-      "hospital",
-      "disease",
-      "virus",
-      "medicine",
-      "heart",
-      "cancer",
-      "fitness",
-      "diet",
-    ],
-    Science: [
-      "science",
-      "space",
-      "nasa",
-      "isro",
-      "satellite",
-      "research",
-      "discovery",
-    ],
-    Astrology: [
-      "astrology",
-      "horoscope",
-      "rasi phalalu",
-      "zodiac",
-      "grahan",
-      "eclipse",
-      "vastu",
-    ],
-    Viral: ["viral", "trending", "social media", "meme", "video"],
-    Photos: ["photo", "gallery", "pics", "images"],
-    Videos: ["video", "watch", "clip"],
   };
-
   const categories = new Set();
   let topCategory = "General";
   let maxCount = 0;
@@ -904,6 +842,7 @@ function classifyArticle(text) {
     topCategory: categories.size > 0 ? topCategory : "General",
   };
 }
+
 // ✅ NEW HELPER FUNCTION TO AUTO-APPLY TAGS
 async function applyCategoryTags(post) {
   const populatedPost = post.populated("tags")
@@ -1621,14 +1560,14 @@ app.get("/api/posts", async (req, res) => {
 
 
 // Main combined feed endpoint
-// ✅ UPDATED Main combined feed endpoint with RANDOM & CATEGORY support
+// ✅ UPDATED Main combined feed endpoint (36 Hours Only)
 app.get("/api/curated-feed", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
     const cursor = req.query.cursor ? new Date(req.query.cursor) : null;
-    const random = req.query.random === "true"; // New random flag
+    const random = req.query.random === "true"; // Random flag from Flutter
 
-    // Handle Category Filter (singular or plural)
+    // 1. Handle Categories
     let categories = [];
     if (req.query.categories) {
       categories = req.query.categories.split(",").filter((c) => c);
@@ -1637,13 +1576,23 @@ app.get("/api/curated-feed", async (req, res) => {
       categories.push(req.query.category);
     }
 
-    // Handle Source Filter
+    // 2. Handle Sources
     const sources = req.query.sources
       ? req.query.sources.split(",").filter((s) => s)
       : [];
 
-    const baseFilter = { isPublished: true };
+    // --- 3. DATE FILTER (Last 36 Hours) ---
+    const HOURS_BACK = 36;
+    const cutoffDate = new Date();
+    cutoffDate.setHours(cutoffDate.getHours() - HOURS_BACK);
 
+    const baseFilter = {
+      isPublished: true,
+      publishedAt: { $gte: cutoffDate }, // Only fetch items newer than 36 hours
+    };
+    // --------------------------------------
+
+    // Apply filters if they exist
     if (categories.length > 0) {
       baseFilter.categories = { $in: categories };
     }
@@ -1654,6 +1603,7 @@ app.get("/api/curated-feed", async (req, res) => {
     // --- CASE 1: RANDOM FEED ---
     if (random) {
       // 1. Get random document IDs using $sample aggregation
+      // Note: This will only sample from the last 36 hours due to baseFilter
       const randomDocs = await Post.aggregate([
         { $match: baseFilter },
         { $sample: { size: limit } }, // Pick random docs
@@ -1667,19 +1617,20 @@ app.get("/api/curated-feed", async (req, res) => {
         .populate("relatedStories", "_id title summary imageUrl")
         .lean();
 
-      // (Optional) Shuffle again in memory because find() may return sorted by ID
+      // Shuffle again in memory to ensure true randomness
       const shuffledPosts = posts.sort(() => 0.5 - Math.random());
 
       return res.json({
         status: "success",
         posts: shuffledPosts,
-        nextCursor: null, // No pagination cursor for random feeds
+        nextCursor: null, // Random feeds don't use standard cursors
       });
     }
 
     // --- CASE 2: STANDARD CHRONOLOGICAL FEED ---
 
     let pinnedPosts = [];
+    // Only fetch pinned posts on the first page (no cursor)
     if (!cursor) {
       const pinFilter = { ...baseFilter, pinnedIndex: { $ne: null } };
       pinnedPosts = await Post.find(pinFilter)
@@ -1688,13 +1639,18 @@ app.get("/api/curated-feed", async (req, res) => {
         .lean();
     }
 
+    // Define filter for regular (non-pinned) posts
     const regularPostsFilter = { ...baseFilter, pinnedIndex: { $eq: null } };
+    
+    // If scrolling (cursor exists), get older posts than the cursor
     if (cursor) {
       regularPostsFilter.publishedAt = { $lt: cursor };
     }
 
+    // Calculate how many regular posts to fetch
     const remainingLimit = limit - pinnedPosts.length;
     let regularPosts = [];
+    
     if (remainingLimit > 0) {
       regularPosts = await Post.find(regularPostsFilter)
         .sort({ publishedAt: -1 })
@@ -1703,7 +1659,10 @@ app.get("/api/curated-feed", async (req, res) => {
         .lean();
     }
 
+    // Combine pinned and regular posts
     const allPosts = [...pinnedPosts, ...regularPosts];
+    
+    // Determine the next cursor for pagination
     let nextCursor = null;
     if (allPosts.length > 0 && allPosts.length >= limit) {
       const lastPost = allPosts[allPosts.length - 1];
@@ -1716,7 +1675,6 @@ app.get("/api/curated-feed", async (req, res) => {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
-
 
 // app.get("/api/curated-feed", async (req, res) => {
 //   try {
