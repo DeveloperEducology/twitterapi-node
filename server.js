@@ -53,36 +53,36 @@ const RSS_SOURCES = [
   // { url: "https://tv9telugu.com/feed", name: "TV9 Telugu", category: "News" },
   // { url: "https://10tv.in/latest/feed", name: "10TV Telugu", category: "News" },
   // { url: "https://telugustop.com/feed/", name: "TeluguStop", category: "News" },
-  {
-    url: "https://www.teluguone.com/news/rssDetails.rss",
-    name: "TeluguOne",
-    category: "News",
-  },
-  {
-    url: "https://telugu.oneindia.com/rss/feeds/telugu-news-fb.xml",
-    name: "OneIndia Telugu",
-    category: "News",
-  },
-  {
-    url: "https://telugu.gulte.com/feed",
-    name: "gulte",
-    category: "News",
-  },
-  {
-    url: "https://telugu.hindustantimes.com/rss/andhra-pradesh",
-    name: "Hindustan Times Telugu (Andhra Pradesh)",
-    category: "Regional News",
-  },
-  {
-    url: "https://telugu.hindustantimes.com/rss/telangana",
-    name: "Hindustan Times Telugu (Telangana)",
-    category: "Regional News",
-  },
-  {
-    url: "https://telugu.hindustantimes.com/rss/sports",
-    name: "Hindustan Times Telugu (Sports)",
-    category: "Sports",
-  },
+  // {
+  //   url: "https://www.teluguone.com/news/rssDetails.rss",
+  //   name: "TeluguOne",
+  //   category: "News",
+  // },
+  // {
+  //   url: "https://telugu.oneindia.com/rss/feeds/telugu-news-fb.xml",
+  //   name: "OneIndia Telugu",
+  //   category: "News",
+  // },
+  // {
+  //   url: "https://telugu.gulte.com/feed",
+  //   name: "gulte",
+  //   category: "News",
+  // },
+  // {
+  //   url: "https://telugu.hindustantimes.com/rss/andhra-pradesh",
+  //   name: "Hindustan Times Telugu (Andhra Pradesh)",
+  //   category: "Regional News",
+  // },
+  // {
+  //   url: "https://telugu.hindustantimes.com/rss/telangana",
+  //   name: "Hindustan Times Telugu (Telangana)",
+  //   category: "Regional News",
+  // },
+  // {
+  //   url: "https://telugu.hindustantimes.com/rss/sports",
+  //   name: "Hindustan Times Telugu (Sports)",
+  //   category: "Sports",
+  // },
 
   // 🌍 National & English News Feeds
   // {
@@ -102,102 +102,27 @@ const RSS_SOURCES = [
   // },
 
   // 💰 Business / Economy
-  {
-    url: "https://telugu.goodreturns.in/rss/",
-    name: "GoodReturns Telugu",
-    category: "Business",
-  },
 
   // 🏏 Sports & Live Scores
   
-  {
-    url: "https://telugu.mykhel.com/rss/feeds/mykhel-telugu-fb.xml",
-    name: "MyKhel Telugu Sports",
-    category: "Sports",
-  },
-  {
-    url: "https://telugu.mykhel.com/rss/feeds/telugu-cricket-fb.xml",
-    name: "MyKhel Telugu Cricket",
-    category: "Sports",
-  },
+
 
   // 🎬 Entertainment & Movies
-  {
-    url: "https://www.cinejosh.com/rss-feed.html",
-    name: "CineJosh Telugu",
-    category: "Entertainment",
-  },
-  {
-    url: "https://telugu.nativeplanet.com/rss/feeds/nativeplanet-telugu-fb.xml",
-    name: "NativePlanet Telugu",
-    category: "Entertainment",
-  },
+
+  
 
   // 💻 Technology
-  {
-    url: "https://telugu.gizbot.com/rss/feeds/telugu-news-fb.xml",
-    name: "Gizbot Telugu Tech",
-    category: "Technology",
-  },
+
 ];
 
 // 🚀 NEW: YouTube RSS Sources
 const YOUTUBE_RSS_SOURCES = [
   // { url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCmqfX0S3x0I3uwLkPdpX03w", name: "Star Sports", category: "Sports", type: "youtube" },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCmqfX0S3x0I3uwLkPdpX03w",
-    name: "Star Sports",
-    category: "News",
-    type: "youtube",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCPXTXMecYqnRKNdqdVOGSFg",
-    name: "Tv9",
-    category: "Tel",
-    type: "youtube",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCQ_FATLW83q-4xJ2fsi8qAw",
-    name: "Sakshi",
-    category: "Tel",
-    type: "youtube",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCPXTXMecYqnRKNdqdVOGSFg",
-    name: "Tv9",
-    category: "Tel",
-    type: "youtube",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCZFMm1mMw0F81Z37aaEzTUA",
-    name: "NDTV",
-    category: "video",
-    type: "youtube",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?user=spacexchannel",
-    name: "SpaceX",
-    category: "Technology",
-    type: "youtube",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?user=GoogleTechTalks",
-    name: "Google Tech Talks",
-    category: "Technology",
-    type: "youtube",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?user=cricketaustraliatv",
-    name: "Cricket Australia",
-    category: "Sports",
-    type: "youtube",
-  },
-  {
-    url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCSRQXk5yErn4e14vN76upOw",
-    name: "Cricbuzz",
-    category: "Sports",
-    type: "youtube",
-  },
+  
+  
+  
+  
+  
 ];
 
 // ✅ NEW: DICTIONARY FOR AUTOMATIC CATEGORY-WISE TAGGING
