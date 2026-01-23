@@ -1026,7 +1026,7 @@ async function updateAllUserProfileVectors() {
 // =================================================================
 // 5. CRON JOBS
 // =================================================================
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("*/8 * * * *", async () => {
   try {
     await axios.get(SELF_URL);
   } catch (err) {
