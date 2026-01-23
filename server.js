@@ -1026,13 +1026,28 @@ async function updateAllUserProfileVectors() {
 // =================================================================
 // 5. CRON JOBS
 // =================================================================
-cron.schedule("*/8 * * * *", async () => {
-  try {
-    await axios.get(SELF_URL);
-  } catch (err) {
-    /* Silently fail on self-ping */
+// cron.schedule("*/8 * * * *", async () => {
+//   try {
+//     await axios.get(SELF_URL);
+//   } catch (err) {
+//     /* Silently fail on self-ping */
+//   }
+// });
+
+
+cron.schedule(
+  "*/10 6-23 * * *",
+  async () => {
+    try {
+      await axios.get(SELF_URL);
+    } catch (err) {
+      // silently ignore
+    }
+  },
+  {
+    timezone: "Asia/Kolkata"
   }
-});
+);
 
 cron.schedule("*/30 * * * *", async () => {
   console.log("⏰ Cron: Starting RSS feed processing...");
